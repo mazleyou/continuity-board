@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { LOADER, MODELS, buildGraph, type ApiGraph } from '../workflow.ts';
-import { BackendUnavailableError, CancelledError, type Backend, type Health, type Phases, type Progress, type RunRequest, type RunResult } from './types.ts';
+import { BackendUnavailableError, CancelledError, type Backend, type Health, type HealthProblem, type Phases, type Progress, type RunRequest, type RunResult } from './types.ts';
 
 type ImageRef = { filename: string; subfolder: string; type: string };
 
@@ -27,24 +27,45 @@ export class ComfyBackend implements Backend {
   async health(): Promise<Health> {
     try {
       const stats = await this.json('/system_stats');
-      const missing: string[] = [];
-      const check = async (node: string, field: string, file: string) => {
+      const problems: HealthProblem[] = [];
+      const check = async (node: string, field: string, file: string, folder: string) => {
         const info = await this.json(`/object_info/${node}`);
-        if (!info?.[node]) { missing.push(`${file} (${node} 노드 없음)`); return; }
+        if (!info?.[node]) {
+          problems.push({ kind: 'missing-node', item: node, fix: [...setupFix(file), 'ComfyUI를 다시 시작합니다'] });
+          return;
+        }
         const spec = info[node].input?.required?.[field];
         const options: string[] = Array.isArray(spec?.[0]) ? spec[0] : spec?.[1]?.options ?? [];
-        if (!options.includes(file)) missing.push(file);
+        if (!options.includes(file)) {
+          problems.push({
+            kind: 'missing-model', item: file, folder, available: options,
+            fix: [...setupFix(file), `또는 파일을 ComfyUI의 models/${folder}/에 넣거나, 설정(CB_PRESET·CB_*_MODEL)을 사용 가능한 파일로 바꿉니다`],
+          });
+        }
       };
-      await check(LOADER === 'gguf' ? 'UnetLoaderGGUF' : 'UNETLoader', 'unet_name', MODELS.diffusion);
-      await check(LOADER === 'gguf' ? 'CLIPLoaderGGUF' : 'CLIPLoader', 'clip_name', MODELS.textEncoder);
-      await check('VAELoader', 'vae_name', MODELS.vae);
+      await check(LOADER === 'gguf' ? 'UnetLoaderGGUF' : 'UNETLoader', 'unet_name', MODELS.diffusion, 'diffusion_models');
+      await check(LOADER === 'gguf' ? 'CLIPLoaderGGUF' : 'CLIPLoader', 'clip_name', MODELS.textEncoder, 'text_encoders');
+      await check('VAELoader', 'vae_name', MODELS.vae, 'vae');
       const version = stats?.system?.comfyui_version ?? 'unknown';
-      return missing.length
-        ? { ok: false, backend: this.name, detail: `ComfyUI ${version}: 모델 파일이 없습니다`, missingModels: missing }
-        : { ok: true, backend: this.name, detail: `ComfyUI ${version} @ ${this.url}` };
+      if (!problems.length) return { ok: true, backend: this.name, detail: `ComfyUI ${version} @ ${this.url}` };
+      return {
+        ok: false, backend: this.name, problems,
+        detail: `ComfyUI ${version}: ${problems.some((p) => p.kind === 'missing-node') ? '필요한 노드가 없습니다' : '모델 파일이 없습니다'}`,
+        missingModels: problems.filter((p) => p.kind === 'missing-model').map((p) => p.item!),
+      };
     } catch (e) {
       const detail = e instanceof BackendUnavailableError ? e.message : `ComfyUI에 연결할 수 없습니다 (${this.url}): ${(e as Error).message}`;
-      return { ok: false, backend: this.name, detail };
+      return {
+        ok: false, backend: this.name, detail,
+        problems: [{
+          kind: 'unreachable',
+          fix: [
+            'ComfyUI를 켭니다: ~/ComfyUI-Installs/ComfyUI/.venv/bin/python ~/ComfyUI-Installs/ComfyUI/main.py --listen 127.0.0.1 --port 8188',
+            `다른 주소에서 실행 중이면 COMFY_URL을 지정합니다 (지금: ${this.url})`,
+            '켜질 때까지 작업은 실패하지 않고 대기열에서 기다립니다',
+          ],
+        }],
+      };
     }
   }
 
@@ -227,10 +248,23 @@ export class ComfyBackend implements Backend {
   }
 }
 
+/** The setup-script invocation that downloads a given model file. */
+export function setupFix(file: string): string[] {
+  if (/base/i.test(file)) return ['WITH_BASE=1 ./scripts/setup-comfyui.sh'];
+  if (/\.gguf$/i.test(file)) return ['WITH_GGUF=1 ./scripts/setup-comfyui.sh'];
+  return ['./scripts/setup-comfyui.sh'];
+}
+
 /** Turns a /prompt validation failure into something a user can act on (e.g. which model file is missing). */
 export function formatComfyError(body: any): string {
-  const nodeErrors = Object.entries<any>(body.node_errors ?? {})
-    .map(([id, e]) => `${e.class_type}#${id}: ${e.errors?.map((x: any) => `${x.message} ${x.details ?? ''}`.trim()).join(', ')}`);
+  const nodeErrors = Object.entries<any>(body.node_errors ?? {}).map(([id, e]) => {
+    const missing = /Loader/.test(e.class_type) && e.errors?.find((x: any) => x.message === 'Value not in list');
+    if (missing) {
+      const file = /'([^']+)' not in/.exec(missing.details ?? '')?.[1] ?? missing.details;
+      return `모델 파일이 없습니다: ${file} (${setupFix(String(file)).join(' ')} 로 받을 수 있습니다)`;
+    }
+    return `${e.class_type}#${id}: ${e.errors?.map((x: any) => `${x.message} ${x.details ?? ''}`.trim()).join(', ')}`;
+  });
   return [`ComfyUI가 워크플로를 거부했습니다: ${body.error?.message ?? ''}`, ...nodeErrors].join(' / ');
 }
 

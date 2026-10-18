@@ -47,7 +47,7 @@ async function fakeComfy(opts: { mode?: 'ok' | 'invalid' | 'error' | 'slow'; web
     if (p === '/prompt') {
       const body = JSON.parse((await readAll(req)).toString());
       if (mode === 'invalid') {
-        return json(res, 400, { error: { message: 'Prompt outputs failed validation' }, node_errors: { 1: { class_type: 'UNETLoader', errors: [{ message: 'Value not in list', details: 'unet_name: missing.safetensors' }] } } });
+        return json(res, 400, { error: { message: 'Prompt outputs failed validation' }, node_errors: { 1: { class_type: 'UNETLoader', errors: [{ message: 'Value not in list', details: "unet_name: 'missing.safetensors' not in ['a.safetensors']" }] } } });
       }
       posted.push(body);
       const id = body.prompt_id;
@@ -146,7 +146,7 @@ test('ComfyUI 백엔드: 업로드 → 제출(우리 prompt_id) → 웹소켓 �
 test('ComfyUI 백엔드: 워크플로 검증 실패는 노드 오류를 사람이 읽을 수 있게 전달한다', async () => {
   const comfy = await fakeComfy({ mode: 'invalid' });
   try {
-    await assert.rejects(new ComfyBackend(comfy.url).run(await request()), /UNETLoader#1: Value not in list unet_name: missing\.safetensors/);
+    await assert.rejects(new ComfyBackend(comfy.url).run(await request()), /모델 파일이 없습니다: missing\.safetensors \(\.\/scripts\/setup-comfyui\.sh 로 받을 수 있습니다\)/);
   } finally {
     await comfy.close();
   }
@@ -211,6 +211,15 @@ test('ComfyUI 백엔드: 상태 확인이 없는 모델 파일을 알려 준다'
     const h = await new ComfyBackend(comfy.url).health();
     assert.equal(h.ok, false);
     assert.deepEqual(h.missingModels, [MODELS.diffusion, MODELS.textEncoder]);
+    const [unet] = h.problems!;
+    assert.equal(unet.kind, 'missing-model');
+    assert.equal(unet.folder, 'diffusion_models');
+    assert.deepEqual(unet.available, ['flux2-vae.safetensors']);
+    assert.match(unet.fix[0], /setup-comfyui\.sh/);
+
+    const down = await new ComfyBackend('http://127.0.0.1:9').health();
+    assert.equal(down.problems![0].kind, 'unreachable');
+    assert.match(down.problems![0].fix[0], /main\.py --listen/);
   } finally {
     await comfy.close();
   }
@@ -243,4 +252,11 @@ test('ComfyUI 백엔드: 웹소켓이 없어도 /history의 캐시 정보로 col
   } finally {
     await comfy.close();
   }
+});
+
+test('설치 안내: 모델 파일 이름에 맞는 설치 명령을 고른다', async () => {
+  const { setupFix } = await import('../server/backends/comfy.ts');
+  assert.deepEqual(setupFix('flux-2-klein-base-4b.safetensors'), ['WITH_BASE=1 ./scripts/setup-comfyui.sh']);
+  assert.deepEqual(setupFix('flux-2-klein-4b-Q8_0.gguf'), ['WITH_GGUF=1 ./scripts/setup-comfyui.sh']);
+  assert.deepEqual(setupFix('qwen_3_4b.safetensors'), ['./scripts/setup-comfyui.sh']);
 });

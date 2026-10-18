@@ -19,6 +19,7 @@ const state = {
   reviewDraft: {},
   pollTimer: null,
   events: null,
+  health: null,
   mask: { on: false, dirty: false, canvas: null },
 };
 
@@ -157,6 +158,7 @@ function renderAll() {
   $('#export-link').href = `/api/projects/${p.id}/export.zip`;
   renderBaseline();
   renderCuts();
+  if (state.health) renderHealthBanner();
   const wait = p.backendWait;
   $('#backend-wait').hidden = !wait;
   if (wait) {
@@ -506,7 +508,7 @@ function renderMeta(cut) {
   $('#approve-cand').textContent = c && c.id === cut.approvedCandidateId ? '승인된 후보' :
     c && cut.approvals.some((e) => e.candidateId === c.id) ? '이 후보로 복원' : '이 후보 승인';
   $('#unapprove').disabled = !cut.approvedCandidateId;
-  $('#edit-run').disabled = !c;
+  $('#edit-run').disabled = !c || blockingProblems().length > 0;
   if (!c) { box.replaceChildren(h('p', { class: 'small muted' }, '후보를 선택하세요.')); return; }
   const g = c.generation;
   const ver = versionOf(c.characterVersionId);
@@ -606,9 +608,36 @@ async function refreshHealth() {
     el.textContent = hl.queue?.backendWait ? 'ComfyUI 기다리는 중' : hl.backend === 'mock' ? 'MOCK 모드' : hl.ok ? 'ComfyUI 연결됨' : 'ComfyUI 문제';
     el.className = `health ${hl.ok ? (hl.backend === 'mock' ? 'mock' : 'ok') : 'bad'}`;
     el.title = hl.detail + (hl.missingModels ? `\n없는 모델: ${hl.missingModels.join(', ')}` : '');
+    state.health = hl;
   } catch {
     el.textContent = '서버 연결 끊김';
     el.className = 'health bad';
+    state.health = null;
+  }
+  renderHealthBanner();
+}
+
+/** Blocking setup problems (missing model files or nodes) get a banner with the exact fix, and block generation. */
+const blockingProblems = () => (state.health?.problems ?? []).filter((p) => p.kind !== 'unreachable');
+
+function renderHealthBanner() {
+  const problems = state.health?.problems ?? [];
+  // While jobs wait for an unreachable ComfyUI, the queue banner already explains it.
+  const shown = problems.filter((p) => p.kind !== 'unreachable' || !P()?.backendWait);
+  const box = $('#health-banner');
+  box.hidden = !shown.length;
+  const title = { unreachable: 'ComfyUI에 연결할 수 없습니다', 'missing-node': '필요한 ComfyUI 노드가 없습니다', 'missing-model': '모델 파일이 없습니다' };
+  box.replaceChildren(
+    h('div', { class: 'hb-body' }, ...shown.map((p) => h('div', { class: 'hb-item' },
+      h('b', {}, title[p.kind], p.item ? h('span', { class: 'mono' }, `  ${p.item}`) : null),
+      p.folder ? h('div', { class: 'small' }, `넣을 위치: ComfyUI/models/${p.folder}/`) : null,
+      p.available ? h('div', { class: 'small' }, `지금 있는 파일: ${p.available.length ? p.available.join(', ') : '없음'}`) : null,
+      h('ol', { class: 'small' }, p.fix.map((f) => h('li', {}, /^(\.\/|WITH_|~\/)/.test(f) ? h('code', {}, f) : f)))))),
+    h('button', { class: 'btn ghost sm', onclick: () => refreshHealth().then(() => toast(state.health?.ok ? 'ComfyUI 준비 완료' : '아직 해결되지 않았습니다')) }, '다시 확인'));
+  const blocked = blockingProblems().length > 0;
+  for (const b of $$('[data-act="gen"], #generate-missing, #edit-run, #refresh-stale')) {
+    b.toggleAttribute('data-blocked', blocked);
+    if (blocked) { b.disabled = true; b.title = '모델 설정 문제를 먼저 해결하세요'; } else if (b.title === '모델 설정 문제를 먼저 해결하세요') { b.disabled = false; b.title = ''; }
   }
 }
 

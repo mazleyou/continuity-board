@@ -45,11 +45,24 @@ export interface RunResult {
   phases?: Phases;
 }
 
+/** One thing the user has to fix before generation can work, with the exact remedy. */
+export interface HealthProblem {
+  kind: 'unreachable' | 'missing-node' | 'missing-model';
+  /** What is missing, e.g. a model file name or a node type. */
+  item?: string;
+  /** For missing models: the ComfyUI models/ sub-folder it belongs in, and what that slot currently offers. */
+  folder?: string;
+  available?: string[];
+  /** Commands or steps that fix it. */
+  fix: string[];
+}
+
 export interface Health {
   ok: boolean;
   backend: string;
   detail: string;
   missingModels?: string[];
+  problems?: HealthProblem[];
 }
 
 /** The backend cannot be reached (not running, restarting, network). The job should wait, not fail. */

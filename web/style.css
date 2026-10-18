@@ -369,3 +369,8 @@ details.box summary { cursor: pointer; margin: 0; }
   background: var(--warn-soft); border: 1px solid var(--warn); color: #6b4510; font-size: 13px;
 }
 .banner .mono { margin-top: 4px; color: var(--warn); }
+
+.bad-banner { background: #fbe1de; border-color: var(--bad); color: #5c1410; align-items: flex-start; }
+.hb-body { display: grid; gap: 10px; }
+.hb-item ol { margin: 6px 0 0; padding-left: 18px; }
+.hb-item code { font-family: var(--mono); background: rgba(255, 255, 255, .7); padding: 1px 6px; border-radius: 4px; user-select: all; }
