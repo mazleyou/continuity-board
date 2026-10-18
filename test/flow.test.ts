@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { unzipSync } from 'fflate';
-import { startApp, seedProject } from './helpers.ts';
+import { startApp, seedProject, solid } from './helpers.ts';
 import { isStale, type Project } from '../server/model.ts';
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
@@ -177,6 +177,39 @@ test('입력 검증: 기준 없이 생성 불가, 빈 수정 지시 거부', asy
     await app.call('PATCH', `/api/projects/${p.id}/cuts/${p.cuts[0].id}`, { scene: { location: 'a', action: 'b', expression: '', shot: 'wide' } });
     await assert.rejects(app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/generate`, {}), /캐릭터 기준/);
     await assert.rejects(app.call('GET', '/api/projects/..%2F..%2Fetc'), /404/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('기준 되돌리기: 이전 기준을 불러와 다시 승인하면, 그 기준으로 만든 컷은 다시 최신이 된다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/generate`, {});
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    p = await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/approve`, { candidateId: p.cuts[0].candidates[0].id });
+    const v1 = p.versions[0];
+
+    // v2 by mistake: different outfit and face photo.
+    await app.call('PUT', `/api/projects/${p.id}/draft/traits`, { traits: { ...p.draft.traits, outfit: '초록 재킷' } });
+    await app.call('PUT', `/api/projects/${p.id}/draft/face`, undefined, await solid('#123'));
+    p = await app.call('POST', `/api/projects/${p.id}/versions`);
+    assert.equal(isStale(p, p.cuts[0]), true);
+    p = await app.call('POST', `/api/projects/${p.id}/refresh-stale`);
+    assert.equal(p.jobs.filter((j) => j.kind === 'edit').length, 1);
+    await app.runner.idle();
+
+    // Restore v1 into the draft and approve it as v3.
+    p = await app.call('POST', `/api/projects/${p.id}/draft/from-version/${v1.id}`, {});
+    assert.deepEqual([p.draft.faceRef!.sha256, p.draft.traits], [v1.faceRef.sha256, v1.traits]);
+    p = await app.call('POST', `/api/projects/${p.id}/versions`);
+    assert.equal(p.versions.length, 3);
+    assert.equal(isStale(p, p.cuts[0]), false, 'cuts made from v1 are current under the identical v3');
+    p = await app.call('POST', `/api/projects/${p.id}/refresh-stale`);
+    assert.equal(p.jobs.filter((j) => j.kind === 'edit').length, 1, 'nothing to refresh');
+    await assert.rejects(app.call('POST', `/api/projects/${p.id}/draft/from-version/nope`, {}), /404/);
   } finally {
     await app.close();
   }

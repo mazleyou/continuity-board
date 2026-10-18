@@ -74,7 +74,13 @@ const assetUrl = (a) => `/api/projects/${P().id}/assets/${a.sha256}.${a.ext}`;
 const currentVersion = () => P().versions.at(-1);
 const versionOf = (id) => P().versions.find((v) => v.id === id);
 const approvedOf = (cut) => cut.candidates.find((c) => c.id === cut.approvedCandidateId);
-const isStale = (cut) => { const a = approvedOf(cut); const v = currentVersion(); return !!a && !!v && a.characterVersionId !== v.id; };
+// Same rule as server/model.ts: a baseline is identified by its content, so restoring an old one makes its cuts current.
+const fingerprint = (v) => JSON.stringify([v.faceRef.sha256, v.bodyRef.sha256, v.traits.name, v.traits.hair, v.traits.outfit, v.traits.props, v.traits.notes]);
+const isCurrentBaseline = (versionId) => {
+  const v = versionOf(versionId), cur = currentVersion();
+  return !!v && !!cur && fingerprint(v) === fingerprint(cur);
+};
+const isStale = (cut) => { const a = approvedOf(cut); return !!a && !!currentVersion() && !isCurrentBaseline(a.characterVersionId); };
 const cutJobs = (cut) => P().jobs.filter((j) => j.cutId === cut.id);
 const activeJobs = () => P().jobs.filter((j) => j.status === 'queued' || j.status === 'running');
 const liveOf = (job) => P().live?.[job.id];
@@ -170,7 +176,7 @@ function renderAll() {
   const busyCuts = new Set(activeJobs().map((j) => j.cutId));
   // Same rule as the server's needsRefresh(): stale, not busy, and no refresh candidate from the current baseline yet.
   const refreshed = (c) => c.candidates.some((x) => x.parentId === c.approvedCandidateId
-    && x.characterVersionId === currentVersion()?.id && x.instruction === REFRESH_INSTRUCTION);
+    && isCurrentBaseline(x.characterVersionId) && x.instruction === REFRESH_INSTRUCTION);
   const staleCount = p.cuts.filter((c) => isStale(c) && !busyCuts.has(c.id) && !refreshed(c)).length;
   const refresh = $('#refresh-stale');
   refresh.hidden = staleCount === 0;
@@ -209,12 +215,19 @@ function renderBaseline() {
 
   $('#version-list').replaceChildren(...[...p.versions].reverse().map((ver) => {
     const used = p.cuts.filter((c) => approvedOf(c)?.characterVersionId === ver.id).length;
+    const restorable = ver !== v && v && fingerprint(ver) !== fingerprint(v);
     return h('li', { class: ver === v ? 'current' : '' },
       h('div', { class: 'vthumbs' }, h('img', { src: assetUrl(ver.faceRef), alt: '' }), h('img', { src: assetUrl(ver.bodyRef), alt: '' })),
       h('div', {},
         h('div', { class: 'vline' }, h('b', {}, `v${ver.number}`), h('span', { class: 'mono small muted' }, fmtTime(ver.createdAt))),
         h('div', { class: 'small' }, [ver.traits.hair, ver.traits.outfit, ver.traits.props].filter(Boolean).join(' / ') || '—'),
-        h('div', { class: 'small muted' }, `승인 컷 ${used}개`)));
+        h('div', { class: 'small muted' }, `승인 컷 ${used}개`),
+        restorable ? h('button', {
+          class: 'linkish small', onclick: () => guard(async () => {
+            setProject(await api('POST', `/api/projects/${P().id}/draft/from-version/${ver.id}`, {}));
+            toast(`v${ver.number}의 참조와 특징을 불러왔습니다. “기준 승인”을 누르면 다시 현재 기준이 됩니다`);
+          }),
+        }, `v${ver.number} 불러오기`) : null));
   }));
 }
 
@@ -489,7 +502,7 @@ function renderStrip(cut) {
     h('img', { src: assetUrl(c.image), alt: '', loading: 'lazy' }),
     h('span', { class: 'cand-label mono' }, `#${i + 1}`, c.kind === 'edit' ? ` ✎←#${parentIdx}` : ''),
     c.id === cut.approvedCandidateId ? h('span', { class: 'mini-stamp' }, '승인') : null,
-    c.characterVersionId !== currentVersion()?.id ? h('span', { class: 'mini-stale' }, `v${versionOf(c.characterVersionId)?.number}`) : null);
+    !isCurrentBaseline(c.characterVersionId) ? h('span', { class: 'mini-stale' }, `v${versionOf(c.characterVersionId)?.number}`) : null);
   });
   for (const j of jobs) {
     const live = j.status === 'running' && liveOf(j);
@@ -521,7 +534,7 @@ function renderMeta(cut) {
     h('dl', {},
       h('dt', {}, '종류'), h('dd', {}, c.kind === 'edit' ? `수정 (#${cut.candidates.findIndex((x) => x.id === c.parentId) + 1}에서)` : '생성'),
       c.instruction ? [h('dt', {}, '지시'), h('dd', {}, c.instruction)] : null,
-      h('dt', {}, '기준'), h('dd', {}, `v${ver?.number ?? '?'}`, ver && ver.id !== currentVersion()?.id ? h('span', { class: 'warn' }, ' · 이전 기준') : null),
+      h('dt', {}, '기준'), h('dd', {}, `v${ver?.number ?? '?'}`, ver && !isCurrentBaseline(ver.id) ? h('span', { class: 'warn' }, ' · 이전 기준') : null),
       h('dt', {}, '시드'), h('dd', { class: 'mono' }, g.seed),
       h('dt', {}, '시간'), h('dd', {}, fmtSec(g.durationMs),
         g.coldStart ? h('span', { class: 'muted' }, ' · 모델을 불러온 실행') : h('span', { class: 'muted' }, ' · 모델이 이미 올라와 있던 실행'),

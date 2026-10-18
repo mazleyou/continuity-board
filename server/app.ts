@@ -157,6 +157,13 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
     store.gc(id).catch(() => {});
     return p;
   });
+  // Copies an earlier baseline into the draft (references and traits); approving it makes it current again.
+  route('POST', '/api/projects/:id/draft/from-version/:versionId', async (_r, { id, versionId }) => store.update(id, (p) => {
+    const v = p.versions.find((x) => x.id === versionId);
+    if (!v) throw new NotFoundError('기준 버전을 찾을 수 없습니다');
+    p.draft = { traits: structuredClone(v.traits), faceRef: v.faceRef, bodyRef: v.bodyRef };
+    return p;
+  }));
   route('POST', '/api/projects/:id/versions', async (_r, { id }) => store.update(id, (p) => {
     const d = p.draft;
     if (!d.faceRef || !d.bodyRef) throw new BadRequest('얼굴 참조와 전신 참조가 모두 필요합니다');

@@ -167,17 +167,32 @@ export function approvedCandidate(cut: Cut): Candidate | undefined {
   return cut.candidates.find((c) => c.id === cut.approvedCandidateId);
 }
 
-/** An approved cut is stale when it was made from an older character baseline than the current one. */
+/** Identity of a baseline's content: two versions with the same references and traits are the same baseline. */
+export function versionFingerprint(v: Pick<CharacterVersion, 'traits' | 'faceRef' | 'bodyRef'>): string {
+  const t = v.traits;
+  return JSON.stringify([v.faceRef.sha256, v.bodyRef.sha256, t.name, t.hair, t.outfit, t.props, t.notes]);
+}
+
+/**
+ * An approved cut is stale when it was made from a baseline whose content differs from the current one.
+ * Comparing content (not version ids) means restoring an older baseline makes its cuts current again.
+ */
 export function isStale(p: Project, cut: Cut): boolean {
   const approved = approvedCandidate(cut);
   const current = currentVersion(p);
-  return !!approved && !!current && approved.characterVersionId !== current.id;
+  if (!approved || !current) return false;
+  const made = p.versions.find((v) => v.id === approved.characterVersionId);
+  return !made || versionFingerprint(made) !== versionFingerprint(current);
 }
 
 /** Stale and not yet refreshed: no candidate edited from the approved one under the current baseline exists. */
 export function needsRefresh(p: Project, cut: Cut, refreshInstruction: string): boolean {
   if (!isStale(p, cut)) return false;
-  const current = currentVersion(p)!;
+  const current = versionFingerprint(currentVersion(p)!);
+  const sameBaseline = (versionId: string) => {
+    const v = p.versions.find((x) => x.id === versionId);
+    return !!v && versionFingerprint(v) === current;
+  };
   return !cut.candidates.some((c) => c.parentId === cut.approvedCandidateId
-    && c.characterVersionId === current.id && c.instruction === refreshInstruction);
+    && sameBaseline(c.characterVersionId) && c.instruction === refreshInstruction);
 }
