@@ -519,7 +519,7 @@ function renderCompare(cut) {
       const img = $('img', fig);
       const stage = h('div', { class: 'mask-stage' });
       img.before(stage);
-      stage.append(img, maskCanvas(), state.mask.cursor);
+      stage.append(img, maskCanvas(), state.mask.cursor, state.mask.rectPreview);
     }
     box.replaceChildren(fig);
   }
@@ -581,20 +581,62 @@ function maskCanvas() {
     cursor.classList.toggle('erase', state.mask.tool === 'erase');
     cursor.hidden = false;
   };
-  c.addEventListener('pointerdown', (e) => {
-    c.setPointerCapture(e.pointerId);
+  const snapshot = () => {
     state.mask.undo.push(ctx.getImageData(0, 0, MASK_W, MASK_H));
     if (state.mask.undo.length > 30) state.mask.undo.shift();
+  };
+  // Rectangle tool: two clicks (corner, opposite corner) - a single-pointer alternative to dragging (WCAG 2.5.7).
+  const rectPreview = h('div', { class: 'mask-rect', hidden: true });
+  const showRect = (e) => {
+    const a = state.mask.rectStart;
+    if (!a) { rectPreview.hidden = true; return; }
+    const r = c.getBoundingClientRect();
+    const [x, y] = pos(e);
+    const sx = r.width / MASK_W, sy = r.height / MASK_H;
+    Object.assign(rectPreview.style, {
+      left: `${Math.min(a[0], x) * sx}px`, top: `${Math.min(a[1], y) * sy}px`,
+      width: `${Math.abs(x - a[0]) * sx}px`, height: `${Math.abs(y - a[1]) * sy}px`,
+    });
+    rectPreview.hidden = false;
+  };
+  c.addEventListener('pointerdown', (e) => {
+    if (state.mask.tool === 'rect') {
+      const p = pos(e);
+      if (!state.mask.rectStart) {
+        state.mask.rectStart = p;
+        showRect(e);
+        return;
+      }
+      const a = state.mask.rectStart;
+      state.mask.rectStart = null;
+      rectPreview.hidden = true;
+      snapshot();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgb(232, 60, 50)';
+      ctx.fillRect(Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.abs(p[0] - a[0]), Math.abs(p[1] - a[1]));
+      updateMaskState();
+      return;
+    }
+    c.setPointerCapture(e.pointerId);
+    snapshot();
     last = pos(e);
     paint(last, last);
   });
-  c.addEventListener('pointermove', (e) => { moveCursor(e); if (!last) return; const p = pos(e); paint(last, p); last = p; });
+  c.addEventListener('pointermove', (e) => {
+    if (state.mask.tool === 'rect') { cursor.hidden = true; showRect(e); return; }
+    moveCursor(e);
+    if (!last) return;
+    const p = pos(e);
+    paint(last, p);
+    last = p;
+  });
   c.addEventListener('pointerleave', () => { cursor.hidden = true; });
   const end = () => { if (last) updateMaskState(); last = null; };
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
   state.mask.canvas = c;
   state.mask.cursor = cursor;
+  state.mask.rectPreview = rectPreview;
   return c;
 }
 
@@ -619,6 +661,9 @@ function undoMask() {
 
 function setMaskTool(tool) {
   state.mask.tool = tool;
+  state.mask.rectStart = null;
+  if (state.mask.rectPreview) state.mask.rectPreview.hidden = true;
+  state.mask.canvas?.classList.toggle('rect-mode', tool === 'rect');
   for (const b of $$('[data-mask-tool]')) b.setAttribute('aria-pressed', String(b.dataset.maskTool === tool));
 }
 
@@ -985,6 +1030,11 @@ function wire() {
   document.addEventListener('keydown', (e) => {
     if (!dlg.open) return;
     const t = e.target;
+    if (e.key === 'Escape' && state.mask.rectStart) {
+      e.preventDefault();
+      setMaskTool('rect');
+      return;
+    }
     if (state.mask.on && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !t.matches('input, textarea')) {
       e.preventDefault();
       undoMask();
