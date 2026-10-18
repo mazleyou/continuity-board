@@ -146,6 +146,11 @@ C. 영역 지정 수정
 - 다른 출처(`Origin`)에서 보낸 요청
 - CORS 사전 확인(preflight) 없이 보낼 수 있는 형식(`text/plain`, 폼)으로 보낸 쓰기 요청
 
+입력도 검사합니다.
+
+- **업로드한 참조 이미지:** EXIF 회전을 반영하고 GPS 위치·카메라 정보 같은 메타데이터를 모두 지운 뒤 PNG로 저장합니다. 최대 64MP, 긴 변 4096px입니다.
+- **가져오기:** 압축을 풀기 전에 ZIP 목록의 크기를 확인해 zip bomb을 막습니다(파일당 256MB, 합계 3GB). `project.json`과 `assets/`만 꺼내고, 프로젝트 구조와 참조하는 모든 파일의 해시를 확인한 뒤에야 프로젝트를 만듭니다.
+
 기본 주소는 `127.0.0.1`입니다. 다른 기기에서 접속하게 하려면 `HOST`와 `CB_ALLOWED_HOSTS`를 지정합니다. 이 경우 같은 네트워크의 누구나 접근할 수 있다는 점에 유의하세요.
 
 ## 구조
@@ -174,7 +179,7 @@ ComfyUI와의 연결에는 ComfyUI 자체 API(`/upload/image`, `/prompt`, `/ws`,
 ## 테스트
 
 ```bash
-npm test               # 23개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
+npm test               # 26개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
 npm run typecheck
 npm run smoke:comfy    # 실제 ComfyUI: 기준 이미지 → 6컷 → 수정 → 영역 수정 → 무결성 → 내보내기
 ```

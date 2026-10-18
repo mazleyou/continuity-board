@@ -1,7 +1,8 @@
 import sharp from 'sharp';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { SCHEMA_VERSION, approvedCandidate, currentVersion, isStale, type CharacterVersion, type Cut, type Project } from './model.ts';
-import { NotFoundError, now, sha256, type Store } from './store.ts';
+import { BadRequestError, now, sha256, type Store } from './store.ts';
+import { validateProject } from './validate.ts';
 import { FRAME, WORKFLOW_VERSION, buildGraph, toUiWorkflow } from './workflow.ts';
 import { REFERENCE_MEGAPIXELS, editPrompt, generationPrompt, generationRefs } from './prompt.ts';
 
@@ -171,24 +172,54 @@ export async function exportZip(store: Store, p: Project): Promise<Uint8Array> {
   return zipSync(files, { level: 6 });
 }
 
-/** Imports an exported package as a new project (new id), verifying every asset hash. */
+const IMPORT_MAX_ENTRY = 256 * 1024 * 1024;
+const IMPORT_MAX_TOTAL = 3 * 1024 * 1024 * 1024;
+
+/**
+ * Imports an exported package as a new project (new id). Sizes are checked from the zip directory before anything
+ * is inflated (zip bombs), only project.json and assets/ are extracted, the project structure is validated, and
+ * every referenced asset must be present with a matching hash. Nothing is created unless all checks pass.
+ */
 export async function importZip(store: Store, zip: Uint8Array): Promise<Project> {
-  const entries = unzipSync(zip);
-  const raw = entries['project.json'];
-  if (!raw) throw new NotFoundError('project.json이 없는 파일입니다');
-  const p: Project = JSON.parse(new TextDecoder().decode(raw));
-  if (p.schemaVersion !== SCHEMA_VERSION) throw new Error(`지원하지 않는 프로젝트 버전입니다: ${p.schemaVersion}`);
-  const created = await store.create(p.title);
-  for (const [name, bytes] of Object.entries(entries)) {
-    const m = /^assets\/([a-f0-9]{64})\.(png|jpg|webp)$/.exec(name);
-    if (!m) continue;
-    if (sha256(bytes) !== m[1]) throw new Error(`손상된 파일: ${name}`);
-    await store.putAsset(created.id, Buffer.from(bytes));
+  let total = 0;
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(zip, {
+      filter: (f) => {
+        const wanted = f.name === 'project.json' || /^assets\/[a-f0-9]{64}\.(png|jpg|webp)$/.test(f.name);
+        if (!wanted) return false;
+        total += f.originalSize;
+        if (f.originalSize > IMPORT_MAX_ENTRY || total > IMPORT_MAX_TOTAL) {
+          throw new BadRequestError(`압축을 풀면 너무 큰 파일입니다: ${f.name}`);
+        }
+        return true;
+      },
+    });
+  } catch (e) {
+    if (e instanceof BadRequestError) throw e;
+    throw new BadRequestError('ZIP 파일을 읽을 수 없습니다');
   }
+  const raw = entries['project.json'];
+  if (!raw) throw new BadRequestError('project.json이 없는 파일입니다');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(raw));
+  } catch {
+    throw new BadRequestError('project.json을 읽을 수 없습니다');
+  }
+  const { project: p, assets } = validateProject(parsed);
+  for (const file of assets) {
+    const bytes = entries[`assets/${file}`];
+    if (!bytes) throw new BadRequestError(`프로젝트가 가리키는 파일이 없습니다: assets/${file}`);
+    if (sha256(bytes) !== file.split('.')[0]) throw new BadRequestError(`손상된 파일: assets/${file}`);
+  }
+
+  const created = await store.create(p.title);
+  for (const file of assets) await store.putAsset(created.id, Buffer.from(entries[`assets/${file}`]));
   return store.update(created.id, (np) => {
     Object.assign(np, p, { id: created.id, createdAt: created.createdAt });
     // Work that was in flight when exported cannot be resumed elsewhere.
-    np.jobs = p.jobs.filter((j) => j.status === 'done' || j.status === 'failed');
+    np.jobs = p.jobs.filter((j) => j.status !== 'queued' && j.status !== 'running');
     np.title = p.title.endsWith('(가져옴)') ? p.title : `${p.title} (가져옴)`;
     return structuredClone(np);
   });

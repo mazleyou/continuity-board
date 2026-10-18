@@ -14,6 +14,27 @@ const DEFAULT_SHOTS: ShotSize[] = ['wide', 'medium', 'close-up', 'full', 'medium
 
 export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
+export class BadRequestError extends Error {}
+
+const UPLOAD_MAX_SIDE = 4096;
+const UPLOAD_MAX_PIXELS = 64_000_000;
+
+/**
+ * Re-encodes a user upload before it is stored: applies the EXIF orientation, drops all metadata
+ * (GPS position, camera, timestamps would otherwise travel into exports and to the GPU server),
+ * caps the size and stores lossless PNG so references do not degrade.
+ */
+export async function normalizeUpload(bytes: Buffer): Promise<Buffer> {
+  try {
+    return await sharp(bytes, { limitInputPixels: UPLOAD_MAX_PIXELS })
+      .rotate()
+      .resize({ width: UPLOAD_MAX_SIDE, height: UPLOAD_MAX_SIDE, fit: 'inside', withoutEnlargement: true })
+      .png()
+      .toBuffer();
+  } catch {
+    throw new BadRequestError(`읽을 수 없는 이미지입니다 (PNG·JPEG·WebP, 최대 ${UPLOAD_MAX_PIXELS / 1e6}MP)`);
+  }
+}
 
 /** File-backed project store. All writes for one project are serialized and written atomically (tmp + rename). */
 export class Store {
@@ -112,9 +133,11 @@ export class Store {
 
   /** Stores bytes content-addressed. Existing files are never rewritten, so approved images cannot change. */
   async putAsset(projectId: string, bytes: Buffer): Promise<Asset> {
-    const meta = await sharp(bytes).metadata();
+    const meta = await sharp(bytes).metadata().catch(() => {
+      throw new BadRequestError('지원하지 않는 이미지 형식입니다 (PNG, JPEG, WebP).');
+    });
     const ext = meta.format === 'jpeg' ? 'jpg' : meta.format === 'webp' ? 'webp' : meta.format === 'png' ? 'png' : null;
-    if (!ext || !meta.width || !meta.height) throw new Error('지원하지 않는 이미지 형식입니다 (PNG, JPEG, WebP).');
+    if (!ext || !meta.width || !meta.height) throw new BadRequestError('지원하지 않는 이미지 형식입니다 (PNG, JPEG, WebP).');
     const asset: Asset = { sha256: sha256(bytes), ext, width: meta.width, height: meta.height };
     const file = this.assetPath(projectId, asset);
     try {

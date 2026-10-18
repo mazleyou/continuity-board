@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import { ConflictError, NotFoundError, newId, now, type Store } from './store.ts';
+import { BadRequestError, ConflictError, NotFoundError, newId, normalizeUpload, now, type Store } from './store.ts';
 import { JobRunner } from './jobs.ts';
 import { exportZip, importZip, renderBoard, templateWorkflows } from './export.ts';
 import { currentVersion, needsRefresh, approvedCandidate, type Asset, type Checklist, type Cut, type Job, type Project, type Scene, type ShotSize, type Traits } from './model.ts';
@@ -20,7 +20,7 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.json': 'application/json',
 };
 
-class BadRequest extends Error {}
+class BadRequest extends BadRequestError {}
 
 type Params = Record<string, string>;
 type Handler = (req: IncomingMessage, params: Params, body: (limit?: number) => Promise<Buffer>) => Promise<unknown>;
@@ -103,7 +103,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   });
   route('PUT', '/api/projects/:id/draft/:slot', async (_r, { id, slot }, body) => {
     if (slot !== 'face' && slot !== 'body') throw new NotFoundError('알 수 없는 참조 슬롯');
-    const asset = await store.putAsset(id, await body());
+    const asset = await store.putAsset(id, await normalizeUpload(await body()));
     return store.update(id, (p) => {
       p.draft[slot === 'face' ? 'faceRef' : 'bodyRef'] = asset;
       return p;
@@ -140,7 +140,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   });
   route('PUT', '/api/projects/:id/cuts/:cutId/ref/:slot', async (_r, { id, cutId, slot }, body) => {
     if (slot !== 'background' && slot !== 'prop') throw new NotFoundError('알 수 없는 참조 슬롯');
-    const asset = await store.putAsset(id, await body());
+    const asset = await store.putAsset(id, await normalizeUpload(await body()));
     return store.update(id, (p) => {
       findCut(p, cutId)[slot === 'background' ? 'backgroundRef' : 'propRef'] = asset;
       return p;
@@ -335,7 +335,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
       }
       await serveStatic(webRoot, path, res);
     } catch (e) {
-      const status = e instanceof Forbidden ? 403 : e instanceof BadRequest ? 400 : e instanceof NotFoundError ? 404 : e instanceof ConflictError ? 409 : 500;
+      const status = e instanceof Forbidden ? 403 : e instanceof BadRequestError ? 400 : e instanceof NotFoundError ? 404 : e instanceof ConflictError ? 409 : 500;
       if (!res.headersSent) res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: (e as Error).message }));
     }
