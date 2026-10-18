@@ -42,7 +42,7 @@ export async function normalizeUpload(bytes: Buffer): Promise<Buffer> {
 /** File-backed project store. All writes for one project are serialized and written atomically (tmp + rename). */
 export class Store {
   readonly root: string;
-  /** Emits ('change', projectId, project) after every successful write. */
+  /** Emits ('change', projectId, project) after every successful write and ('deleted', projectId). */
   readonly events = new EventEmitter().setMaxListeners(0);
   private locks = new Map<string, Promise<unknown>>();
 
@@ -114,7 +114,7 @@ export class Store {
     try {
       text = await readFile(file, 'utf8');
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError(`project not found: ${id}`);
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError(`프로젝트를 찾을 수 없습니다 (삭제되었을 수 있습니다): ${id}`);
       throw e;
     }
     try {
@@ -149,6 +149,7 @@ export class Store {
 
   async delete(id: string) {
     await rm(this.projectDir(id), { recursive: true, force: true });
+    this.events.emit('deleted', id);
   }
 
   /** Keeps the previous version as project.json.bak, then replaces project.json durably. */
@@ -183,7 +184,7 @@ export class Store {
   async putAsset(projectId: string, bytes: Buffer): Promise<Asset> {
     // Never resurrect a deleted project's folder (e.g. a job finishing after the project was deleted).
     await stat(join(this.projectDir(projectId), 'project.json')).catch(() => {
-      throw new NotFoundError(`project not found: ${projectId}`);
+      throw new NotFoundError(`프로젝트를 찾을 수 없습니다 (삭제되었을 수 있습니다): ${projectId}`);
     });
     const meta = await sharp(bytes).metadata().catch(() => {
       throw new BadRequestError('지원하지 않는 이미지 형식입니다 (PNG, JPEG, WebP).');

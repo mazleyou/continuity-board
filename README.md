@@ -197,7 +197,7 @@ ComfyUI와의 연결에는 ComfyUI 자체 API(`/upload/image`, `/prompt`, `/ws`,
 ## 테스트
 
 ```bash
-npm test               # 47개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
+npm test               # 48개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
 npm run typecheck
 npm run report         # 모든 프로젝트를 모아 평가 보고서 (기획서 목표 대비) 생성. 앱 상단 “평가 보고서”로도 볼 수 있습니다
 npm run smoke:comfy    # 실제 ComfyUI: 기준 이미지 → 6컷 → 수정 → 영역 수정 → 무결성 → 내보내기

@@ -72,3 +72,20 @@ test('UI용 응답에는 그래프 대신 hasGraph만 담고, 그래프는 후�
     await app.close();
   }
 });
+
+test('이벤트 스트림: 다른 곳에서 프로젝트를 지우면 deleted 이벤트를 보내고 스트림을 닫는다', async () => {
+  const app = await startApp();
+  try {
+    const p = await seedProject(app);
+    const pending = collect(`${app.base}/api/projects/${p.id}/events`, (ev) => ev.some((e) => e.event === 'deleted'));
+    await new Promise((r) => setTimeout(r, 100));
+    await app.call('DELETE', `/api/projects/${p.id}`);
+    const events = await pending;
+    assert.deepEqual(events.at(-1), { event: 'deleted', data: { id: p.id } });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(app.store.events.listenerCount('change'), 0, 'listeners released');
+    await assert.rejects(app.call('GET', `/api/projects/${p.id}`), /404 .*삭제되었을 수 있습니다/);
+  } finally {
+    await app.close();
+  }
+});

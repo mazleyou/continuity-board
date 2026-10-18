@@ -178,6 +178,15 @@ function subscribe(id) {
     Object.assign(state.project, JSON.parse(e.data));
     renderAll();
   });
+  es.addEventListener('deleted', () => guard(async () => {
+    es.close();
+    if (P()?.id !== id) return;
+    const title = P().title;
+    if ($('#cut-dialog').open) $('#cut-dialog').close();
+    remember('cb.project', '');
+    await loadProjectList();
+    toast(`“${title}”은(는) 다른 창에서 삭제되었습니다`, 'error');
+  }));
   es.addEventListener('open', () => clearTimeout(state.pollTimer));
   es.addEventListener('error', () => schedulePoll());
 }

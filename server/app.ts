@@ -126,6 +126,9 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
         const onChange = (changedId: string, next: Project) => { if (changedId === id) { p = next; send('project', forClient(p)); } };
         const onProgress = (projectId: string) => { if (projectId === id) sendLive(); };
         const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 25_000);
+        // Deleted elsewhere (another tab): tell this tab and end the stream.
+        const onDeleted = (deletedId: string) => { if (deletedId === id) { send('deleted', { id }); res.end(); } };
+        store.events.on('deleted', onDeleted);
         store.events.on('change', onChange);
         runner.events.on('progress', onProgress);
         runner.events.on('wait', sendLive);
@@ -133,6 +136,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
           clearInterval(heartbeat);
           if (timer) clearTimeout(timer);
           store.events.off('change', onChange);
+          store.events.off('deleted', onDeleted);
           runner.events.off('progress', onProgress);
           runner.events.off('wait', sendLive);
         });
