@@ -116,3 +116,29 @@ test('손상된 project.json은 백업으로 복구하고, 백업까지 망가�
     await app.close();
   }
 });
+
+test('삭제는 휴지통으로: 되돌리면 이미지·승인까지 그대로이고, 오래된 휴지통은 비운다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/generate`, {});
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    p = await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/approve`, { candidateId: p.cuts[0].candidates[0].id });
+    await app.call('DELETE', `/api/projects/${p.id}`);
+    await assert.rejects(app.call('GET', `/api/projects/${p.id}`), /404/);
+    assert.equal((await app.call<unknown[]>('GET', '/api/projects')).length, 0);
+
+    const back = await app.call('POST', `/api/trash/${p.id}/restore`, {});
+    assert.equal(back.cuts[0].approvedCandidateId, p.cuts[0].approvedCandidateId);
+    assert.ok((await app.call<{ ok: boolean }>('GET', `/api/projects/${p.id}/verify`)).ok);
+    await assert.rejects(app.call('POST', `/api/trash/${p.id}/restore`, {}), /404/);
+
+    await app.call('DELETE', `/api/projects/${p.id}`);
+    assert.deepEqual(await app.store.purgeTrash(60_000), [], 'recent trash is kept');
+    assert.deepEqual(await app.store.purgeTrash(0), [p.id]);
+    await assert.rejects(app.call('POST', `/api/trash/${p.id}/restore`, {}), /404/);
+  } finally {
+    await app.close();
+  }
+});

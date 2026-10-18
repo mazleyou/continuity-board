@@ -13,6 +13,8 @@ export const now = () => new Date().toISOString();
 
 const DEFAULT_SHOTS: ShotSize[] = ['wide', 'medium', 'close-up', 'full', 'medium', 'wide'];
 
+export const TRASH_DAYS = 7;
+
 export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
 export class BadRequestError extends Error {}
@@ -147,9 +149,36 @@ export class Store {
     return run;
   }
 
+  /** Moves the project to the trash (restorable for TRASH_DAYS days) instead of erasing it. */
   async delete(id: string) {
-    await rm(this.projectDir(id), { recursive: true, force: true });
+    const trashed = join(this.root, 'trash', id);
+    await mkdir(join(this.root, 'trash'), { recursive: true });
+    await rm(trashed, { recursive: true, force: true });
+    await rename(this.projectDir(id), trashed);
     this.events.emit('deleted', id);
+  }
+
+  async restore(id: string): Promise<Project> {
+    if (!/^[a-z0-9-]+$/.test(id)) throw new NotFoundError('휴지통에 없는 프로젝트입니다');
+    const trashed = join(this.root, 'trash', id);
+    await stat(join(trashed, 'project.json')).catch(() => { throw new NotFoundError('휴지통에 없는 프로젝트입니다'); });
+    if (await stat(this.projectDir(id)).then(() => true, () => false)) throw new ConflictError('같은 프로젝트가 이미 있습니다');
+    await rename(trashed, this.projectDir(id));
+    return this.load(id);
+  }
+
+  /** Permanently removes trashed projects older than maxAgeMs (default TRASH_DAYS). */
+  async purgeTrash(maxAgeMs = TRASH_DAYS * 24 * 3600_000): Promise<string[]> {
+    const dir = join(this.root, 'trash');
+    const purged = [];
+    for (const id of await readdir(dir).catch(() => [] as string[])) {
+      const info = await stat(join(dir, id)).catch(() => null);
+      if (info && Date.now() - info.mtimeMs >= maxAgeMs) {
+        await rm(join(dir, id), { recursive: true, force: true });
+        purged.push(id);
+      }
+    }
+    return purged;
   }
 
   /** Keeps the previous version as project.json.bak, then replaces project.json durably. */

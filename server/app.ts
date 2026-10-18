@@ -151,6 +151,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
       return p;
     });
   });
+  route('POST', '/api/trash/:id/restore', async (_r, { id }) => store.restore(id));
   route('DELETE', '/api/projects/:id', async (_r, { id }) => {
     await store.load(id);
     await runner.cancelProject(id);

@@ -604,3 +604,8 @@ body { background: radial-gradient(1200px 700px at 10% -10%, #fbe7f1 0%, transpa
 
 .mask-rect { position: absolute; pointer-events: none; border: 2px dashed var(--seal); background: rgba(232, 60, 50, .2); border-radius: 4px; }
 .mask-canvas.rect-mode { cursor: crosshair; }
+
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast.has-action { pointer-events: auto; }
+.toast-action { border: 2px solid rgba(255, 255, 255, .7); background: transparent; color: #fff; font-weight: 700; border-radius: 999px; padding: 4px 12px; cursor: pointer; min-height: 28px; }
+.toast-action:hover { background: rgba(255, 255, 255, .15); }

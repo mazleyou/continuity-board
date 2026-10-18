@@ -114,12 +114,16 @@ document.addEventListener('click', (e) => {
 });
 
 let toastTimer;
-function toast(msg, kind = 'info') {
+/** Shows a status message; `action` adds a button (e.g. undo) and keeps the toast up for its duration. */
+function toast(msg, kind = 'info', action = null) {
   const t = $('#toast');
-  t.textContent = msg;
-  t.className = `toast show ${kind}`;
+  t.replaceChildren(h('span', {}, msg));
+  if (action) {
+    t.append(h('button', { class: 'toast-action', onclick: () => { t.className = 'toast'; action.run(); } }, action.label));
+  }
+  t.className = `toast show ${kind}${action ? ' has-action' : ''}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.className = 'toast'), kind === 'error' ? 6000 : 2800);
+  toastTimer = setTimeout(() => (t.className = 'toast'), action?.ms ?? (kind === 'error' ? 6000 : 2800));
 }
 
 async function guard(fn) {
@@ -944,13 +948,20 @@ function wire() {
   $('#delete-project').addEventListener('click', () => guard(async () => {
     const p = P();
     const candidates = p.cuts.reduce((n, c) => n + c.candidates.length, 0);
-    const ok = confirm(`“${p.title}” 프로젝트를 삭제할까요?\n후보 이미지 ${candidates}개와 캐릭터 기준 ${p.versions.length}개가 함께 지워지고 되돌릴 수 없습니다.\n먼저 “내보내기 ZIP”으로 보관할 수 있습니다.`);
+    const ok = confirm(`“${p.title}” 프로젝트를 삭제할까요?\n후보 이미지 ${candidates}개와 캐릭터 기준 ${p.versions.length}개가 휴지통으로 옮겨지고, 7일 뒤 완전히 지워집니다.`);
     if (!ok) return;
     state.events?.close();
     await api('DELETE', `/api/projects/${p.id}`);
     remember('cb.project', '');
     await loadProjectList();
-    toast(`“${p.title}”을(를) 삭제했습니다`, 'ok');
+    toast(`“${p.title}”을(를) 휴지통으로 옮겼습니다 (7일 뒤 완전히 삭제)`, 'ok', {
+      label: '되돌리기', ms: 10000,
+      run: () => guard(async () => {
+        await api('POST', `/api/trash/${p.id}/restore`, {});
+        await loadProjectList(p.id);
+        toast(`“${p.title}”을(를) 되돌렸습니다`, 'ok');
+      }),
+    });
   }));
   $('#import-file').addEventListener('change', (e) => guard(async () => {
     const f = e.target.files[0];

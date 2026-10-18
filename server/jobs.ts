@@ -52,6 +52,7 @@ export class JobRunner {
   }
 
   async recover() {
+    await this.store.purgeTrash().catch(() => {});
     for (const { id } of await this.store.list()) {
       await this.store.gc(id).catch(() => {});
       const queued = await this.store.update(id, (p) => {
