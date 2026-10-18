@@ -71,3 +71,19 @@ test('앱이 ComfyUI에 보내는 그래프는 임시 미리보기로 끝나고,
   const tpl = templateWorkflows()['generate.api.json'] as Record<string, { class_type: string }>;
   assert.equal(tpl['17'].class_type, 'SaveImage');
 });
+
+test('프로젝트 삭제: 실행 중인 작업을 멈추고, 지운 뒤에 폴더가 다시 생기지 않는다', async () => {
+  const app = await startApp(undefined, 400);
+  try {
+    const p = await seedProject(app);
+    await app.call('POST', `/api/projects/${p.id}/generate-missing`, { count: 1 });
+    await new Promise((r) => setTimeout(r, 150));
+    await app.call('DELETE', `/api/projects/${p.id}`);
+    await app.runner.idle();
+    assert.deepEqual(await readdir(join(app.dir, 'projects')), []);
+    assert.equal(app.runner.pending, 0);
+    await assert.rejects(app.call('GET', `/api/projects/${p.id}`), /404/);
+  } finally {
+    await app.close();
+  }
+});

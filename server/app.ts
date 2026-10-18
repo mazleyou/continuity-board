@@ -134,6 +134,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   });
   route('DELETE', '/api/projects/:id', async (_r, { id }) => {
     await store.load(id);
+    await runner.cancelProject(id);
     await store.delete(id);
     return { ok: true };
   });

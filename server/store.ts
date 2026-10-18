@@ -141,6 +141,10 @@ export class Store {
 
   /** Stores bytes content-addressed. Existing files are never rewritten, so approved images cannot change. */
   async putAsset(projectId: string, bytes: Buffer): Promise<Asset> {
+    // Never resurrect a deleted project's folder (e.g. a job finishing after the project was deleted).
+    await stat(join(this.projectDir(projectId), 'project.json')).catch(() => {
+      throw new NotFoundError(`project not found: ${projectId}`);
+    });
     const meta = await sharp(bytes).metadata().catch(() => {
       throw new BadRequestError('지원하지 않는 이미지 형식입니다 (PNG, JPEG, WebP).');
     });

@@ -90,6 +90,12 @@ export class JobRunner {
     return this.queue.length < before;
   }
 
+  /** Stops everything belonging to a project (used before deleting it). */
+  async cancelProject(projectId: string) {
+    this.queue = this.queue.filter((q) => q.projectId !== projectId);
+    if (this.running?.projectId === projectId) await this.cancel(projectId, this.running.jobId);
+  }
+
   /** Resolves when the queue is empty and nothing is running (used by tests and scripts). */
   async idle() {
     while (this.busy || this.queue.length) await new Promise((r) => setTimeout(r, 25));

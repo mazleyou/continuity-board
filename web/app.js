@@ -756,6 +756,17 @@ function wire() {
     $('#project-title').focus();
     $('#project-title').select();
   }));
+  $('#delete-project').addEventListener('click', () => guard(async () => {
+    const p = P();
+    const candidates = p.cuts.reduce((n, c) => n + c.candidates.length, 0);
+    const ok = confirm(`“${p.title}” 프로젝트를 삭제할까요?\n후보 이미지 ${candidates}개와 캐릭터 기준 ${p.versions.length}개가 함께 지워지고 되돌릴 수 없습니다.\n먼저 “내보내기 ZIP”으로 보관할 수 있습니다.`);
+    if (!ok) return;
+    state.events?.close();
+    await api('DELETE', `/api/projects/${p.id}`);
+    remember('cb.project', '');
+    await loadProjectList();
+    toast(`“${p.title}”을(를) 삭제했습니다`, 'ok');
+  }));
   $('#import-file').addEventListener('change', (e) => guard(async () => {
     const f = e.target.files[0];
     e.target.value = '';
