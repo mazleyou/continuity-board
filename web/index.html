@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Continuity Board</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='9' width='26' height='18' rx='2' fill='%231d1b17'/><path d='M3 9l4-6h6l-4 6zm10 0l4-6h6l-4 6z' fill='%23e8b923'/></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="slate" aria-hidden="true"></span>
+      <div>
+        <div class="brand-name">Continuity Board</div>
+        <div class="brand-sub">캐릭터 기준을 지키며 고치는 6컷 콘티</div>
+      </div>
+    </div>
+    <div class="project-bar">
+      <select id="project-select" aria-label="프로젝트 선택"></select>
+      <input id="project-title" class="title-input" aria-label="프로젝트 제목" maxlength="120">
+      <button id="new-project" class="btn ghost">새 프로젝트</button>
+      <label class="btn ghost file-btn">가져오기<input id="import-file" type="file" accept=".zip" hidden></label>
+    </div>
+    <div class="top-actions">
+      <span id="health" class="health" title="실행 백엔드 상태">확인 중…</span>
+      <button id="verify" class="btn ghost" title="승인·후보 이미지의 파일 해시를 다시 계산합니다">무결성 확인</button>
+      <a id="board-link" class="btn ghost" target="_blank">보드 PNG</a>
+      <a id="export-link" class="btn ink">내보내기 ZIP</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="baseline" aria-labelledby="baseline-h">
+      <div class="panel-head">
+        <h2 id="baseline-h">캐릭터 기준</h2>
+        <span id="version-badge" class="vbadge">미승인</span>
+      </div>
+      <div class="refs">
+        <label class="drop" data-slot="face">
+          <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <span class="drop-label"><b>1</b> 얼굴·머리</span>
+          <img alt="">
+          <span class="drop-hint">정면 얼굴 사진을<br>끌어 놓거나 클릭</span>
+        </label>
+        <label class="drop" data-slot="body">
+          <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <span class="drop-label"><b>2</b> 의상·전신</span>
+          <img alt="">
+          <span class="drop-hint">전신 사진을<br>끌어 놓거나 클릭</span>
+        </label>
+      </div>
+      <form id="traits" class="traits" autocomplete="off">
+        <label>이름<input name="name" placeholder="예: 민지"></label>
+        <label>머리<input name="hair" placeholder="짧은 검은 머리"></label>
+        <label>의상<input name="outfit" placeholder="노란 재킷, 흰 티셔츠, 청바지"></label>
+        <label>소품<input name="props" placeholder="빨간 숄더백"></label>
+        <label>기타<input name="notes" placeholder="왼쪽 눈썹의 작은 흉터"></label>
+      </form>
+      <p class="hint">모델 프롬프트에 들어가므로 영어로 쓰면 결과가 더 안정적입니다.</p>
+      <button id="approve-baseline" class="btn stamp-btn">기준 승인</button>
+      <p id="baseline-msg" class="msg" role="status"></p>
+
+      <details class="style-box">
+        <summary>시각 스타일</summary>
+        <textarea id="style" rows="3" maxlength="300"></textarea>
+      </details>
+
+      <div class="versions">
+        <h3>기준 이력</h3>
+        <ol id="version-list"></ol>
+      </div>
+
+      <div class="legend">
+        <div><span class="lg lock">고정</span><span>승인한 컷의 <b>파일</b>은 다른 작업으로 바뀌지 않습니다. 시스템이 보장합니다.</span></div>
+        <div><span class="lg guide">유도</span><span>캐릭터의 <b>특징</b>은 참조와 프롬프트로 유도합니다. 모델 출력이라 완전히 보장되지는 않습니다.</span></div>
+      </div>
+    </aside>
+
+    <section class="board" aria-labelledby="board-h">
+      <div class="board-head">
+        <h1 id="board-h">6컷 보드 <span class="aspect">16:9</span></h1>
+        <div class="board-actions">
+          <button id="refresh-stale" class="btn ghost warn-btn" hidden title="이전 기준으로 승인한 컷마다 현재 기준에 맞추는 수정 후보를 만듭니다. 승인은 바뀌지 않습니다."></button>
+          <label class="count">후보 <select id="gen-count"><option>1</option><option selected>2</option><option>3</option></select></label>
+          <button id="generate-missing" class="btn ink">미승인 컷 모두 생성</button>
+        </div>
+      </div>
+      <div id="cuts" class="cuts"></div>
+    </section>
+  </main>
+
+  <dialog id="cut-dialog" class="cut-dialog" aria-labelledby="dlg-title">
+    <div class="dlg-head">
+      <h2 id="dlg-title"></h2>
+      <div class="dlg-head-actions">
+        <button class="btn ghost" data-nav="-1" aria-label="이전 컷">←</button>
+        <button class="btn ghost" data-nav="1" aria-label="다음 컷">→</button>
+        <button class="btn ghost" id="dlg-close" aria-label="닫기">닫기</button>
+      </div>
+    </div>
+    <div class="dlg-body">
+      <div class="compare-col">
+        <div class="compare-toolbar">
+          <div class="seg" role="radiogroup" aria-label="비교 방식">
+            <button data-mode="side" class="on">나란히</button>
+            <button data-mode="swipe">겹쳐 밀기</button>
+            <button data-mode="single">후보만</button>
+          </div>
+          <span id="cmp-caption" class="mono small"></span>
+        </div>
+        <div id="compare" class="compare side"></div>
+        <div class="strip-head">
+          <h3>후보 · 수정 이력</h3>
+          <span class="small muted">승인하지 않은 후보는 승인 결과를 덮어쓰지 않습니다</span>
+        </div>
+        <div id="strip" class="strip"></div>
+      </div>
+      <div class="side-col">
+        <section class="box">
+          <h3>선택한 후보</h3>
+          <div id="cand-meta" class="cand-meta"></div>
+          <div class="row">
+            <button id="approve-cand" class="btn stamp-btn">이 후보 승인</button>
+            <button id="unapprove" class="btn ghost">승인 해제</button>
+          </div>
+        </section>
+        <section class="box">
+          <h3>이 후보 수정</h3>
+          <textarea id="edit-instruction" rows="3" maxlength="600" placeholder="예: Change the bag to the red shoulder bag. (가방 색 수정)"></textarea>
+          <div class="mask-row">
+            <button type="button" id="mask-toggle" class="btn ghost sm" aria-pressed="false">영역 칠하기</button>
+            <div id="mask-tools" class="mask-tools" hidden>
+              <label class="small">붓 <input id="mask-brush" type="range" min="16" max="160" value="60" aria-label="붓 크기"></label>
+              <button type="button" id="mask-clear" class="linkish small">지우기</button>
+            </div>
+          </div>
+          <div class="row">
+            <input id="edit-seed" class="seed" inputmode="numeric" placeholder="시드 (비우면 무작위)">
+            <button id="edit-run" class="btn ink">수정 후보 만들기</button>
+          </div>
+          <p class="small muted">수정할 컷이 image 1, 승인 기준의 얼굴·전신이 image 2·3으로 들어갑니다. 영역을 칠하지 않으면 전체를 다시 그리므로 배경이나 얼굴이 달라질 수 있습니다. <b>영역을 칠하면 칠한 곳 밖의 픽셀은 원본과 똑같이 유지됩니다.</b> 결과는 새 후보로만 추가됩니다.</p>
+        </section>
+        <section class="box">
+          <h3>검토 체크리스트</h3>
+          <form id="review" class="review">
+            <input name="reviewer" placeholder="평가자 이름" required>
+            <div class="checks">
+              <span>얼굴</span><span data-k="face"></span>
+              <span>헤어</span><span data-k="hair"></span>
+              <span>의상</span><span data-k="outfit"></span>
+              <span>소품</span><span data-k="props"></span>
+              <span>장면 지시</span><span data-k="scene"></span>
+            </div>
+            <input name="note" placeholder="메모 (선택)">
+            <button class="btn ghost">평가 저장</button>
+          </form>
+          <div id="review-list" class="small"></div>
+        </section>
+        <section class="box">
+          <h3>컷 참조 (선택)</h3>
+          <div class="cut-refs">
+            <label class="drop small-drop" data-cutslot="background">
+              <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
+              <span class="drop-label"><b>3</b> 배경</span><img alt=""><span class="drop-hint">배경 참조</span>
+              <button type="button" class="x" aria-label="배경 참조 제거">×</button>
+            </label>
+            <label class="drop small-drop" data-cutslot="prop">
+              <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
+              <span class="drop-label"><b>4</b> 소품</span><img alt=""><span class="drop-hint">소품 참조</span>
+              <button type="button" class="x" aria-label="소품 참조 제거">×</button>
+            </label>
+          </div>
+        </section>
+        <details class="box">
+          <summary>승인 이력</summary>
+          <ol id="approval-log" class="small mono"></ol>
+        </details>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, stat, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import sharp from 'sharp';
+import {
+  CUT_COUNT, SCHEMA_VERSION, emptyTraits,
+  type Asset, type Project, type ShotSize,
+} from './model.ts';
+
+export const newId = () => randomUUID().slice(0, 8);
+export const now = () => new Date().toISOString();
+
+const DEFAULT_SHOTS: ShotSize[] = ['wide', 'medium', 'close-up', 'full', 'medium', 'wide'];
+
+export class NotFoundError extends Error {}
+export class ConflictError extends Error {}
+
+/** File-backed project store. All writes for one project are serialized and written atomically (tmp + rename). */
+export class Store {
+  readonly root: string;
+  private locks = new Map<string, Promise<unknown>>();
+
+  constructor(root: string) {
+    this.root = root;
+  }
+
+  projectDir(id: string) {
+    if (!/^[a-z0-9-]+$/.test(id)) throw new NotFoundError(`invalid project id: ${id}`);
+    return join(this.root, 'projects', id);
+  }
+
+  assetPath(projectId: string, asset: Pick<Asset, 'sha256' | 'ext'>) {
+    if (!/^[a-f0-9]{64}$/.test(asset.sha256)) throw new NotFoundError('invalid asset');
+    return join(this.projectDir(projectId), 'assets', `${asset.sha256}.${asset.ext}`);
+  }
+
+  async list(): Promise<Pick<Project, 'id' | 'title' | 'updatedAt'>[]> {
+    const dir = join(this.root, 'projects');
+    await mkdir(dir, { recursive: true });
+    const out = [];
+    for (const id of await readdir(dir)) {
+      try {
+        const p = await this.load(id);
+        out.push({ id: p.id, title: p.title, updatedAt: p.updatedAt });
+      } catch {
+        // not a project directory
+      }
+    }
+    return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async create(title: string): Promise<Project> {
+    const t = now();
+    const p: Project = {
+      schemaVersion: SCHEMA_VERSION,
+      id: newId(),
+      title: title || '새 스토리보드',
+      style: 'clean storyboard illustration, soft flat colors, clear line art',
+      aspect: '16:9',
+      createdAt: t,
+      updatedAt: t,
+      draft: { traits: emptyTraits() },
+      versions: [],
+      cuts: Array.from({ length: CUT_COUNT }, (_, index) => ({
+        id: newId(),
+        index,
+        scene: { location: '', action: '', expression: '', shot: DEFAULT_SHOTS[index] },
+        candidates: [],
+        approvedCandidateId: null,
+        approvals: [],
+      })),
+      jobs: [],
+    };
+    await mkdir(join(this.projectDir(p.id), 'assets'), { recursive: true });
+    await this.write(p);
+    return p;
+  }
+
+  async load(id: string): Promise<Project> {
+    try {
+      return JSON.parse(await readFile(join(this.projectDir(id), 'project.json'), 'utf8'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError(`project not found: ${id}`);
+      throw e;
+    }
+  }
+
+  /** Read-modify-write under a per-project lock. The mutator may throw to abort without writing. */
+  update<T>(id: string, mutate: (p: Project) => T | Promise<T>): Promise<T> {
+    const prev = this.locks.get(id) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(async () => {
+      const p = await this.load(id);
+      const result = await mutate(p);
+      p.updatedAt = now();
+      await this.write(p);
+      return result;
+    });
+    this.locks.set(id, run);
+    return run;
+  }
+
+  async delete(id: string) {
+    await rm(this.projectDir(id), { recursive: true, force: true });
+  }
+
+  private async write(p: Project) {
+    const file = join(this.projectDir(p.id), 'project.json');
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tmp, JSON.stringify(p, null, 2));
+    await rename(tmp, file);
+  }
+
+  /** Stores bytes content-addressed. Existing files are never rewritten, so approved images cannot change. */
+  async putAsset(projectId: string, bytes: Buffer): Promise<Asset> {
+    const meta = await sharp(bytes).metadata();
+    const ext = meta.format === 'jpeg' ? 'jpg' : meta.format === 'webp' ? 'webp' : meta.format === 'png' ? 'png' : null;
+    if (!ext || !meta.width || !meta.height) throw new Error('지원하지 않는 이미지 형식입니다 (PNG, JPEG, WebP).');
+    const asset: Asset = { sha256: sha256(bytes), ext, width: meta.width, height: meta.height };
+    const file = this.assetPath(projectId, asset);
+    try {
+      await stat(file);
+    } catch {
+      await mkdir(join(this.projectDir(projectId), 'assets'), { recursive: true });
+      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(tmp, bytes, { flag: 'wx' });
+      await rename(tmp, file);
+    }
+    return asset;
+  }
+
+  readAsset(projectId: string, asset: Pick<Asset, 'sha256' | 'ext'>) {
+    return readFile(this.assetPath(projectId, asset));
+  }
+
+  /** Re-hashes every image the project references and reports any file whose content no longer matches. */
+  async verify(projectId: string) {
+    const p = await this.load(projectId);
+    const assets: { label: string; asset: Asset }[] = [];
+    for (const v of p.versions) {
+      assets.push({ label: `v${v.number} face`, asset: v.faceRef }, { label: `v${v.number} body`, asset: v.bodyRef });
+    }
+    for (const cut of p.cuts) {
+      for (const c of cut.candidates) assets.push({ label: `cut ${cut.index + 1} / ${c.id}`, asset: c.image });
+    }
+    const problems: string[] = [];
+    for (const { label, asset } of assets) {
+      try {
+        if (sha256(await this.readAsset(projectId, asset)) !== asset.sha256) problems.push(`${label}: hash mismatch`);
+      } catch {
+        problems.push(`${label}: missing file`);
+      }
+    }
+    const approved = p.cuts
+      .map((c) => ({ cut: c.index + 1, sha256: c.candidates.find((x) => x.id === c.approvedCandidateId)?.image.sha256 ?? null }));
+    return { ok: problems.length === 0, checked: assets.length, problems, approved };
+  }
+}
+
+export function sha256(bytes: Buffer | Uint8Array) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
