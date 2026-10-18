@@ -253,7 +253,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
       return { p, jobs: ready.flatMap((c) => queueGenerate(p, c, count)), skipped };
     });
     enqueueAll(id, jobs);
-    return { ...p, skipped };
+    return { ...p, skipped, queued: jobs.length };
   });
   route('POST', '/api/projects/:id/cuts/:cutId/candidates/:cid/edit', async (_r, { id, cutId, cid }, body) => {
     const b = await json(body);

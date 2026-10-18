@@ -857,7 +857,8 @@ function wire() {
 
   $('#generate-missing').addEventListener('click', () => guard(async () => {
     const p = await api('POST', `/api/projects/${P().id}/generate-missing`, { count: Number($('#gen-count').value) });
-    const n = p.jobs.filter((j) => j.status === 'queued').length - activeJobs().filter((j) => j.status === 'queued').length;
+    // The server says how many it queued; diffing local state is wrong once the event stream has already delivered them.
+    const n = p.queued;
     setProject(p);
     const skipped = p.skipped?.length ? ` · 장면이 비어 있는 컷 ${p.skipped.join(', ')}은 건너뛰었습니다` : '';
     toast(n > 0 ? `작업 ${n}개를 대기열에 넣었습니다${skipped}` : '생성할 미승인 컷이 없습니다');

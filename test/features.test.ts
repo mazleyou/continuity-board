@@ -190,6 +190,7 @@ test('미승인 컷 모두 생성: 장면이 빈 컷은 건너뛰고 나머지�
     const r = await app.call<Project & { skipped: number[] }>('POST', `/api/projects/${p.id}/generate-missing`, { count: 1 });
     assert.equal(r.jobs.length, 4);
     assert.deepEqual(r.skipped, [5, 6]);
+    assert.equal((r as unknown as { queued: number }).queued, 4);
     await app.runner.idle();
     // With only empty cuts left, the request explains why nothing was queued.
     for (const c of r.cuts.slice(0, 4)) {
