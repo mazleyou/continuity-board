@@ -4,14 +4,17 @@
   "description": "Open-source 6-cut storyboard that keeps one character consistent, preserves approved cuts and fixes only the wrong ones — powered by ComfyUI + FLUX.2 [klein] 4B.",
   "license": "Apache-2.0",
   "type": "module",
-  "engines": { "node": ">=23.6" },
+  "engines": {
+    "node": ">=23.6"
+  },
   "scripts": {
     "start": "node server/index.ts",
     "start:mock": "CB_BACKEND=mock node server/index.ts",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "workflows": "node scripts/export-workflows.ts",
-    "smoke:comfy": "node scripts/smoke-comfy.ts"
+    "smoke:comfy": "node scripts/smoke-comfy.ts",
+    "report": "node scripts/eval-report.ts"
   },
   "dependencies": {
     "fflate": "0.8.2",

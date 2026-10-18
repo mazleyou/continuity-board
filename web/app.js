@@ -7,7 +7,7 @@ const SHOTS = [
   ['extreme-wide', '익스트림 와이드'], ['wide', '와이드'], ['full', '풀샷'],
   ['medium', '미디엄'], ['close-up', '클로즈업'], ['extreme-close-up', '익스트림 클로즈업'],
 ];
-const CHECKS = ['face', 'hair', 'outfit', 'props', 'scene'];
+const CHECKS = ['face', 'hair', 'outfit', 'props', 'scene', 'instruction'];
 const REFRESH_INSTRUCTION = 'redraw the person so the face, hair, outfit and props exactly match the current character baseline in image 2 and image 3';
 
 const state = {
@@ -565,7 +565,9 @@ function renderChecks() {
 function renderReviews(cut) {
   const c = selectedCandidate(cut);
   $('#review').classList.toggle('disabled', !c);
-  const label = { face: '얼굴', hair: '헤어', outfit: '의상', props: '소품', scene: '장면' };
+  const label = { face: '얼굴', hair: '헤어', outfit: '의상', props: '소품', scene: '장면', instruction: '수정 지시' };
+  // "Edit instruction carried out" only applies to edits.
+  $$('#review .edit-only').forEach((el) => { el.hidden = c?.kind !== 'edit'; });
   $('#review-list').replaceChildren(...(c?.reviews ?? []).map((r) => h('div', { class: 'review-row' },
     h('b', {}, r.reviewer), ' ',
     CHECKS.filter((k) => r.checklist[k] !== undefined).map((k) => h('span', { class: `rk ${r.checklist[k] ? 'ok' : 'ng'}` }, label[k])),
@@ -741,7 +743,10 @@ function wire() {
       const f = e.target.elements;
       const cut = dialogCut();
       remember('cb.reviewer', f.reviewer.value.trim());
-      const checklist = Object.fromEntries(CHECKS.filter((k) => state.reviewDraft[k] !== undefined).map((k) => [k, state.reviewDraft[k]]));
+      const kind = selectedCandidate(cut)?.kind;
+      const checklist = Object.fromEntries(CHECKS
+        .filter((k) => state.reviewDraft[k] !== undefined && (k !== 'instruction' || kind === 'edit'))
+        .map((k) => [k, state.reviewDraft[k]]));
       setProject(await api('POST', `/api/projects/${P().id}/cuts/${cut.id}/candidates/${state.selectedCandidateId}/reviews`, {
         reviewer: f.reviewer.value, checklist, note: f.note.value,
       }));

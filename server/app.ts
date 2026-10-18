@@ -286,7 +286,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
     if (!reviewer) throw new BadRequest('평가자 이름을 입력하세요');
     const k = b.checklist ?? {};
     const checklist: Checklist = {};
-    for (const key of ['face', 'hair', 'outfit', 'props', 'scene'] as const) if (typeof k[key] === 'boolean') checklist[key] = k[key];
+    for (const key of ['face', 'hair', 'outfit', 'props', 'scene', 'instruction'] as const) if (typeof k[key] === 'boolean') checklist[key] = k[key];
     return store.update(id, (p) => {
       const c = findCut(p, cutId).candidates.find((x) => x.id === cid);
       if (!c) throw new NotFoundError('후보를 찾을 수 없습니다');

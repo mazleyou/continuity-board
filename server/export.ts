@@ -90,7 +90,7 @@ export function templateWorkflows(): Record<string, unknown> {
 }
 
 export function evaluationCsv(p: Project): string {
-  const rows: unknown[][] = [['cut', 'candidate', 'kind', 'character_version', 'approved', 'reviewer', 'face', 'hair', 'outfit', 'props', 'scene', 'note', 'duration_ms', 'cold_start', 'prepare_ms', 'sample_ms', 'finish_ms', 'seed']];
+  const rows: unknown[][] = [['cut', 'candidate', 'kind', 'character_version', 'approved', 'reviewer', 'face', 'hair', 'outfit', 'props', 'scene', 'instruction', 'note', 'duration_ms', 'cold_start', 'prepare_ms', 'sample_ms', 'finish_ms', 'seed']];
   const yn = (b?: boolean) => (b === undefined ? '' : b ? 'pass' : 'fail');
   for (const cut of p.cuts) {
     for (const c of cut.candidates) {
@@ -98,10 +98,10 @@ export function evaluationCsv(p: Project): string {
       const base = [cut.index + 1, c.id, c.kind, `v${ver}`, c.id === cut.approvedCandidateId ? 'yes' : 'no'];
       const ph = c.generation.phases ?? {};
       const tail = [c.generation.durationMs, c.generation.coldStart, ph.prepareMs ?? '', ph.sampleMs ?? '', ph.finishMs ?? '', c.generation.seed];
-      if (!c.reviews.length) rows.push([...base, '', '', '', '', '', '', '', ...tail]);
+      if (!c.reviews.length) rows.push([...base, '', '', '', '', '', '', '', '', ...tail]);
       for (const r of c.reviews) {
         const k = r.checklist;
-        rows.push([...base, r.reviewer, yn(k.face), yn(k.hair), yn(k.outfit), yn(k.props), yn(k.scene), r.note, ...tail]);
+        rows.push([...base, r.reviewer, yn(k.face), yn(k.hair), yn(k.outfit), yn(k.props), yn(k.scene), yn(k.instruction), r.note, ...tail]);
       }
     }
   }

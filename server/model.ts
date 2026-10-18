@@ -53,6 +53,8 @@ export interface Checklist {
   outfit?: boolean;
   props?: boolean;
   scene?: boolean;
+  /** Edits only: the edit instruction was carried out. */
+  instruction?: boolean;
 }
 
 export interface Review {
