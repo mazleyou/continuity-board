@@ -151,6 +151,40 @@ const fmtSec = (ms) => `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}초`;
 const remember = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
+// ---------- autosave ----------
+// Text fields save shortly after typing stops, not only on blur: otherwise a reload or closed tab while the cursor
+// is still in the field loses the text. Each save captures its project id and values when scheduled.
+const pendingSaves = new Map();
+
+function autosave(key, method, path, body, after, delay = 600) {
+  clearTimeout(pendingSaves.get(key)?.timer);
+  const entry = { method, path, body, after, timer: setTimeout(() => runSave(key), delay) };
+  pendingSaves.set(key, entry);
+}
+
+async function runSave(key, { keepalive = false } = {}) {
+  const e = pendingSaves.get(key);
+  if (!e) return;
+  pendingSaves.delete(key);
+  clearTimeout(e.timer);
+  if (keepalive) {
+    // The page is going away: fire-and-forget request that survives unload.
+    fetch(e.path, { method: e.method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(e.body), keepalive: true });
+    return;
+  }
+  await guard(async () => {
+    const res = await api(e.method, e.path, e.body);
+    if (P()?.id === res?.id) setProject(res);
+    await e.after?.(res);
+  });
+}
+
+function flushSaves(opts) {
+  return Promise.all([...pendingSaves.keys()].map((k) => runSave(k, opts)));
+}
+addEventListener('pagehide', () => flushSaves({ keepalive: true }));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSaves({ keepalive: true }); });
+
 function setProject(p) {
   const prev = state.project;
   state.project = p;
@@ -216,6 +250,7 @@ async function loadProjectList(selectId) {
 }
 
 async function openProject(id) {
+  await flushSaves();
   remember('cb.project', id);
   state.cutEls.clear();
   state.seen.versions.clear();
@@ -315,12 +350,14 @@ function buildCutCard(cut) {
     field('expression', '표정', '졸린 얼굴'),
     h('label', { class: 'sf' }, h('span', {}, '샷'), shotSel),
     field('lighting', '조명·분위기', '부드러운 아침 햇살 (선택)'));
-  scene.addEventListener('change', () => guard(async () => {
+  const scheduleScene = () => {
     const f = scene.elements;
-    setProject(await api('PATCH', `/api/projects/${P().id}/cuts/${cut.id}`, {
+    autosave(`scene:${cut.id}`, 'PATCH', `/api/projects/${P().id}/cuts/${cut.id}`, {
       scene: { location: f.location.value, action: f.action.value, expression: f.expression.value, shot: f.shot.value, lighting: f.lighting.value },
-    }));
-  }));
+    });
+  };
+  scene.addEventListener('input', scheduleScene);
+  scene.addEventListener('change', () => { scheduleScene(); runSave(`scene:${cut.id}`); });
   const el = h('article', { class: 'cut', dataset: { id: cut.id }, style: `--i:${cut.index}` },
     h('div', { class: 'frame', onclick: () => openDialog(cut.id), role: 'button', tabindex: 0, 'aria-label': `컷 ${cut.index + 1} 검토 열기` },
       h('span', { class: 'cutno mono' }, `CUT ${pad2(cut.index + 1)}`),
@@ -929,11 +966,13 @@ function wireDrop(drop, upload) {
 
 function wire() {
   $('#project-select').addEventListener('change', (e) => guard(() => openProject(e.target.value)));
-  $('#project-title').addEventListener('change', (e) => guard(async () => {
-    setProject(await api('PATCH', `/api/projects/${P().id}`, { title: e.target.value }));
-    await loadProjectList(P().id);
-  }));
-  $('#style').addEventListener('change', (e) => guard(async () => setProject(await api('PATCH', `/api/projects/${P().id}`, { style: e.target.value }))));
+  const scheduleTitle = (e) => autosave('title', 'PATCH', `/api/projects/${P().id}`, { title: e.target.value },
+    () => { for (const o of $('#project-select').options) if (o.value === P()?.id) o.textContent = P().title; });
+  $('#project-title').addEventListener('input', scheduleTitle);
+  $('#project-title').addEventListener('change', (e) => { scheduleTitle(e); runSave('title'); });
+  const scheduleStyle = (e) => autosave('style', 'PATCH', `/api/projects/${P().id}`, { style: e.target.value });
+  $('#style').addEventListener('input', scheduleStyle);
+  $('#style').addEventListener('change', (e) => { scheduleStyle(e); runSave('style'); });
   $('#new-project').addEventListener('click', () => guard(async () => {
     const p = await api('POST', '/api/projects', { title: '새 스토리보드' });
     await loadProjectList(p.id);
@@ -988,16 +1027,15 @@ function wire() {
     });
   }
 
-  let traitTimer;
-  const saveTraits = () => guard(async () => {
+  const scheduleTraits = (delay) => {
     const f = $('#traits').elements;
     const traits = Object.fromEntries(['name', 'hair', 'outfit', 'props', 'notes'].map((k) => [k, f[k].value]));
-    setProject(await api('PUT', `/api/projects/${P().id}/draft/traits`, { traits }));
-  });
-  $('#traits').addEventListener('input', () => { clearTimeout(traitTimer); traitTimer = setTimeout(saveTraits, 500); });
+    autosave('traits', 'PUT', `/api/projects/${P().id}/draft/traits`, { traits }, null, delay);
+  };
+  const saveTraits = () => { scheduleTraits(0); return runSave('traits'); };
+  $('#traits').addEventListener('input', () => scheduleTraits(500));
   $('#traits').addEventListener('submit', (e) => e.preventDefault());
   $('#approve-baseline').addEventListener('click', () => guard(async () => {
-    clearTimeout(traitTimer);
     await saveTraits();
     const p = await api('POST', `/api/projects/${P().id}/versions`);
     setProject(p);
