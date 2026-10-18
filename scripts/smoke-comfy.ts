@@ -10,7 +10,7 @@ import sharp from 'sharp';
 import { ComfyBackend } from '../server/backends/comfy.ts';
 import { blendAlpha } from '../server/inpaint.ts';
 import { MODELS, PRESET_NAME } from '../server/workflow.ts';
-import { Store } from '../server/store.ts';
+import { Store, sha256 } from '../server/store.ts';
 import { createApp } from '../server/app.ts';
 import type { Project } from '../server/model.ts';
 
@@ -21,19 +21,22 @@ const health = await backend.health();
 if (!health.ok) throw new Error(health.detail + (health.missingModels ? `: ${health.missingModels.join(', ')}` : ''));
 
 const timings: Record<string, number | string> = {};
-async function t2i(name: string, prompt: string, width: number, height: number) {
+async function t2i(name: string, prompt: string, width: number, height: number, refs: Buffer[] = []) {
   const existing = await readFile(join(out, `${name}.png`)).catch(() => null);
   if (existing) return existing;
   const t0 = Date.now();
-  const r = await backend.run({ kind: 'generate', prompt, references: [], seed: 20261012, width, height, label: `smoke_${name}` });
+  const references = refs.map((b) => ({ role: 'body', sha256: sha256(b), bytes: b, megapixels: 1 }));
+  const r = await backend.run({ kind: 'generate', prompt, references, seed: 20261012, width, height, label: `smoke_${name}` });
   timings[`ref:${name}${r.coldStart ? ' (cold)' : ''}`] = Date.now() - t0;
   await writeFile(join(out, `${name}.png`), r.image);
   return r.image;
 }
 
 const look = 'a woman in her late 20s with short straight black hair, wearing a bright yellow jacket over a white t-shirt, dark blue jeans, white sneakers, carrying a small red shoulder bag';
-const face = await t2i('ref-face', `Character reference photo: head and shoulders portrait, facing the camera, neutral expression, ${look}. Plain light grey studio background, soft even lighting.`, 768, 768);
 const body = await t2i('ref-body', `Character reference photo: full body, standing straight, facing the camera, head to toe visible, ${look}. Plain light grey studio background.`, 640, 1024);
+// The face reference is made FROM the body reference (image 1): a text-only "portrait" prompt tended to come back
+// full-body, and two independent generations drift apart in hair and outfit.
+const face = await t2i('ref-face', `Close-up head-and-shoulders portrait of the exact same person as in image 1, maintaining exact likeness of the face and hair, wearing the same clothes. The face fills the upper half of the frame, looking straight at the camera with a neutral expression. Plain light grey studio background, soft even lighting. Style: realistic photo.`, 768, 768, [body]);
 
 const store = new Store(await mkdtemp(join(tmpdir(), 'cb-smoke-')));
 const { server, runner } = createApp(store, backend, resolve(import.meta.dirname, '../web'));
