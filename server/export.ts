@@ -1,5 +1,5 @@
 import sharp, { type OverlayOptions } from 'sharp';
-import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import { strToU8, unzipSync, zip, type Zippable } from 'fflate';
 import { SCHEMA_VERSION, approvedCandidate, currentVersion, isStale, type CharacterVersion, type Cut, type Project } from './model.ts';
 import { BadRequestError, now, referencedShas, sha256, type Store } from './store.ts';
 import { validateProject } from './validate.ts';
@@ -108,6 +108,9 @@ export function evaluationCsv(p: Project): string {
   return rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n') + '\n';
 }
 
+/** Images are already compressed: store them as-is instead of spending CPU on deflate for ~0% gain. */
+const stored = (bytes: Buffer): [Uint8Array, { level: 0 }] => [new Uint8Array(bytes), { level: 0 }];
+
 /** A self-contained, re-importable package: project.json + assets + human-friendly board/cuts/workflows. */
 export async function exportZip(store: Store, p: Project): Promise<Uint8Array> {
   const files: Zippable = {};
@@ -116,19 +119,19 @@ export async function exportZip(store: Store, p: Project): Promise<Uint8Array> {
   const assets: Zippable = {};
   for (const sha of referencedShas(p)) {
     const file = await store.findAsset(p.id, sha);
-    if (file) assets[`${file.sha256}.${file.ext}`] = new Uint8Array(await store.readAsset(p.id, file));
+    if (file) assets[`${file.sha256}.${file.ext}`] = stored(await store.readAsset(p.id, file));
   }
   files['project.json'] = strToU8(JSON.stringify(p, null, 2));
   files['assets'] = assets;
 
-  files['board.png'] = new Uint8Array(await renderBoard(store, p));
+  files['board.png'] = stored(await renderBoard(store, p));
   const cuts: Zippable = {};
   const workflows: Zippable = {};
   for (const cut of p.cuts) {
     const a = approvedCandidate(cut);
     if (!a) continue;
     const n = String(cut.index + 1).padStart(2, '0');
-    cuts[`cut-${n}.${a.image.ext}`] = new Uint8Array(await store.readAsset(p.id, a.image));
+    cuts[`cut-${n}.${a.image.ext}`] = stored(await store.readAsset(p.id, a.image));
     if (a.generation.graph) workflows[`cut-${n}.${a.kind}.api.json`] = strToU8(JSON.stringify(a.generation.graph, null, 2));
   }
   files['cuts'] = cuts;
@@ -162,7 +165,8 @@ export async function exportZip(store: Store, p: Project): Promise<Uint8Array> {
     note: 'Re-running a graph with the same seed may not reproduce identical pixels on different hardware or software versions.',
   };
   files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
-  return zipSync(files, { level: 6 });
+  // Async zip (fflate worker threads) so a large export does not freeze the server for other requests.
+  return new Promise((resolve, reject) => zip(files, { level: 6 }, (err, data) => (err ? reject(err) : resolve(data))));
 }
 
 const IMPORT_MAX_ENTRY = 256 * 1024 * 1024;
