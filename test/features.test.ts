@@ -181,3 +181,23 @@ test('프롬프트: 패널 번호·부정문 없이 인물 먼저, 닮음 유지
   assert.match(edit, /^In image 1, change the bag to green\./);
   assert.match(edit, /lighting/);
 });
+
+test('미승인 컷 모두 생성: 장면이 빈 컷은 건너뛰고 나머지는 생성한다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    for (const c of p.cuts.slice(4)) p = await app.call('PATCH', `/api/projects/${p.id}/cuts/${c.id}`, { scene: { location: '', action: '', expression: '', shot: 'wide' } });
+    const r = await app.call<Project & { skipped: number[] }>('POST', `/api/projects/${p.id}/generate-missing`, { count: 1 });
+    assert.equal(r.jobs.length, 4);
+    assert.deepEqual(r.skipped, [5, 6]);
+    await app.runner.idle();
+    // With only empty cuts left, the request explains why nothing was queued.
+    for (const c of r.cuts.slice(0, 4)) {
+      const q = await app.call('GET', `/api/projects/${p.id}`);
+      await app.call('POST', `/api/projects/${p.id}/cuts/${c.id}/approve`, { candidateId: q.cuts[c.index].candidates[0].id });
+    }
+    await assert.rejects(app.call('POST', `/api/projects/${p.id}/generate-missing`, {}), /400 .*컷 5, 6/);
+  } finally {
+    await app.close();
+  }
+});

@@ -222,13 +222,18 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   });
   route('POST', '/api/projects/:id/generate-missing', async (_r, { id }, body) => {
     const count = Math.min(3, Math.max(1, Number((await json(body)).count) || 1));
-    const { p, jobs } = await store.update(id, (p) => {
+    const { p, jobs, skipped } = await store.update(id, (p) => {
+      if (!currentVersion(p)) throw new BadRequest('먼저 캐릭터 기준을 승인하세요');
       const busy = new Set(p.jobs.filter((j) => j.status === 'queued' || j.status === 'running').map((j) => j.cutId));
       const targets = p.cuts.filter((c) => !c.approvedCandidateId && !busy.has(c.id));
-      return { p, jobs: targets.flatMap((c) => queueGenerate(p, c, count)) };
+      // Cuts whose scene is still empty are skipped (and reported) instead of blocking the ready ones.
+      const ready = targets.filter((c) => c.scene.location || c.scene.action);
+      const skipped = targets.filter((c) => !ready.includes(c)).map((c) => c.index + 1);
+      if (!ready.length && skipped.length) throw new BadRequest(`장면이 비어 있는 컷만 남았습니다 (컷 ${skipped.join(', ')}): 장소나 행동을 입력하세요`);
+      return { p, jobs: ready.flatMap((c) => queueGenerate(p, c, count)), skipped };
     });
     enqueueAll(id, jobs);
-    return p;
+    return { ...p, skipped };
   });
   route('POST', '/api/projects/:id/cuts/:cutId/candidates/:cid/edit', async (_r, { id, cutId, cid }, body) => {
     const b = await json(body);
