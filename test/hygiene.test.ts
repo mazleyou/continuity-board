@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { unzipSync } from 'fflate';
@@ -83,6 +83,35 @@ test('프로젝트 삭제: 실행 중인 작업을 멈추고, 지운 뒤에 폴�
     assert.deepEqual(await readdir(join(app.dir, 'projects')), []);
     assert.equal(app.runner.pending, 0);
     await assert.rejects(app.call('GET', `/api/projects/${p.id}`), /404/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('손상된 project.json은 백업으로 복구하고, 백업까지 망가지면 목록에 “손상됨”으로 남긴다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    p = await app.call('PATCH', `/api/projects/${p.id}`, { title: '마지막 저장' });
+    const file = join(app.dir, 'projects', p.id, 'project.json');
+    const full = await readFile(file, 'utf8');
+
+    await writeFile(file, full.slice(0, full.length / 2)); // torn write
+    let q = await app.call('GET', `/api/projects/${p.id}`);
+    assert.equal(q.cuts.length, 6, 'served from the backup');
+    assert.ok(JSON.parse(await readFile(file, 'utf8')), 'project.json restored on disk');
+    const kept = (await readdir(join(app.dir, 'projects', p.id))).filter((f) => f.startsWith('project.json.corrupt-'));
+    assert.equal(kept.length, 1, 'the damaged file is kept for inspection');
+
+    await writeFile(file, ''); // zero-length after power loss
+    q = await app.call('GET', `/api/projects/${p.id}`);
+    assert.equal(q.id, p.id);
+
+    await writeFile(file, '{');
+    await writeFile(`${file}.bak`, '');
+    const list = await app.call<{ id: string; title: string; corrupt?: boolean }[]>('GET', '/api/projects');
+    assert.deepEqual(list.map((x) => [x.id, x.corrupt]), [[p.id, true]]);
+    await assert.rejects(app.call('GET', `/api/projects/${p.id}`), /409 .*손상되었고 백업도/);
   } finally {
     await app.close();
   }

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import sharp from 'sharp';
 import {
   CUT_COUNT, SCHEMA_VERSION, emptyTraits,
@@ -16,6 +16,8 @@ const DEFAULT_SHOTS: ShotSize[] = ['wide', 'medium', 'close-up', 'full', 'medium
 export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
 export class BadRequestError extends Error {}
+/** project.json and its backup are both unreadable. */
+export class CorruptProjectError extends Error {}
 
 const UPLOAD_MAX_SIDE = 4096;
 const UPLOAD_MAX_PIXELS = 64_000_000;
@@ -62,7 +64,7 @@ export class Store {
     return join(this.projectDir(projectId), 'assets', `${asset.sha256}.${asset.ext}`);
   }
 
-  async list(): Promise<Pick<Project, 'id' | 'title' | 'updatedAt'>[]> {
+  async list(): Promise<(Pick<Project, 'id' | 'title' | 'updatedAt'> & { corrupt?: boolean })[]> {
     const dir = join(this.root, 'projects');
     await mkdir(dir, { recursive: true });
     const out = [];
@@ -70,8 +72,9 @@ export class Store {
       try {
         const p = await this.load(id);
         out.push({ id: p.id, title: p.title, updatedAt: p.updatedAt });
-      } catch {
-        // not a project directory
+      } catch (e) {
+        // A damaged project stays visible (its images are still on disk) instead of silently disappearing.
+        if (e instanceof CorruptProjectError) out.push({ id, title: `(손상됨) ${id}`, updatedAt: '', corrupt: true });
       }
     }
     return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -104,12 +107,28 @@ export class Store {
     return p;
   }
 
+  /** Loads project.json; if it is damaged (torn write, power loss), falls back to - and restores - the backup. */
   async load(id: string): Promise<Project> {
+    const file = join(this.projectDir(id), 'project.json');
+    let text: string;
     try {
-      return JSON.parse(await readFile(join(this.projectDir(id), 'project.json'), 'utf8'));
+      text = await readFile(file, 'utf8');
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError(`project not found: ${id}`);
       throw e;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      let backup: Project;
+      try {
+        backup = JSON.parse(await readFile(`${file}.bak`, 'utf8'));
+      } catch {
+        throw new CorruptProjectError(`프로젝트 파일이 손상되었고 백업도 읽을 수 없습니다: projects/${id}/project.json (이미지는 assets/에 남아 있습니다)`);
+      }
+      await copyFile(file, `${file}.corrupt-${Date.now()}`).catch(() => {});
+      await this.writeFileDurably(file, JSON.stringify(backup, null, 2));
+      return backup;
     }
   }
 
@@ -132,11 +151,32 @@ export class Store {
     await rm(this.projectDir(id), { recursive: true, force: true });
   }
 
+  /** Keeps the previous version as project.json.bak, then replaces project.json durably. */
   private async write(p: Project) {
     const file = join(this.projectDir(p.id), 'project.json');
+    await copyFile(file, `${file}.bak`).catch((e) => { if (e.code !== 'ENOENT') throw e; });
+    await this.writeFileDurably(file, JSON.stringify(p, null, 2));
+  }
+
+  /** tmp file + fsync + rename + directory fsync, so a crash leaves either the old or the new file, never a torn one. */
+  private async writeFileDurably(file: string, text: string) {
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify(p, null, 2));
+    const fh = await open(tmp, 'w');
+    try {
+      await fh.writeFile(text);
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
     await rename(tmp, file);
+    const dir = await open(dirname(file), 'r');
+    try {
+      await dir.sync();
+    } catch {
+      // some filesystems do not support fsync on directories
+    } finally {
+      await dir.close();
+    }
   }
 
   /** Stores bytes content-addressed. Existing files are never rewritten, so approved images cannot change. */

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import { BadRequestError, ConflictError, NotFoundError, newId, normalizeUpload, now, type Store } from './store.ts';
+import { BadRequestError, ConflictError, CorruptProjectError, NotFoundError, newId, normalizeUpload, now, type Store } from './store.ts';
 import { JobRunner } from './jobs.ts';
 import { exportZip, importZip, renderBoard, templateWorkflows } from './export.ts';
 import { currentVersion, needsRefresh, approvedCandidate, type Asset, type Checklist, type Cut, type Job, type Project, type Scene, type ShotSize, type Traits } from './model.ts';
@@ -402,7 +402,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
       }
       await serveStatic(webRoot, path, res);
     } catch (e) {
-      const status = e instanceof Forbidden ? 403 : e instanceof BadRequestError ? 400 : e instanceof NotFoundError ? 404 : e instanceof ConflictError ? 409 : 500;
+      const status = e instanceof Forbidden ? 403 : e instanceof BadRequestError ? 400 : e instanceof NotFoundError ? 404 : e instanceof ConflictError || e instanceof CorruptProjectError ? 409 : 500;
       if (!res.headersSent) res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: (e as Error).message }));
     }
