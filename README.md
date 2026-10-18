@@ -14,7 +14,7 @@
 
 ## 실제 실행 결과
 
-`npm run smoke:comfy`가 Mac Studio M5 Ultra에서 실제 모델로 만든 결과입니다. 기준 이미지 2장([examples/mina](examples/mina/))도 같은 모델이 텍스트만으로 만든 가상 인물입니다. 컷마다 후보를 1개씩만 만들었고, 고르지 않고 그대로 승인했습니다.
+`npm run smoke:comfy`가 Mac Studio M5 Ultra에서 실제 모델로 만든 결과입니다. 기준 이미지 2장([examples/mina](examples/mina/))도 같은 모델로 만든 가상 인물입니다. 전신은 텍스트만으로, 얼굴 클로즈업은 그 전신 사진을 참조로 만들었습니다. 컷마다 후보를 1개씩만 만들었고, 고르지 않고 그대로 승인했습니다.
 
 ![실제 6컷 보드](docs/images/board.png)
 
