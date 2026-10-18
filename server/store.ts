@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdir, readFile, readdir, rename, stat, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import {
@@ -44,8 +44,12 @@ export class Store {
   readonly events = new EventEmitter().setMaxListeners(0);
   private locks = new Map<string, Promise<unknown>>();
 
-  constructor(root: string) {
+  /** Unreferenced files younger than this are kept, so a just-uploaded file is never collected before it is linked. */
+  private readonly gcMinAgeMs: number;
+
+  constructor(root: string, opts: { gcMinAgeMs?: number } = {}) {
     this.root = root;
+    this.gcMinAgeMs = opts.gcMinAgeMs ?? 10 * 60_000;
   }
 
   projectDir(id: string) {
@@ -155,8 +159,44 @@ export class Store {
     return asset;
   }
 
+  /** Locates a stored asset by hash (generation records keep only the hash). */
+  async findAsset(projectId: string, sha: string): Promise<Pick<Asset, 'sha256' | 'ext'> | null> {
+    for (const ext of ['png', 'jpg', 'webp'] as const) {
+      try {
+        await stat(this.assetPath(projectId, { sha256: sha, ext }));
+        return { sha256: sha, ext };
+      } catch {
+        // try the next extension
+      }
+    }
+    return null;
+  }
+
   readAsset(projectId: string, asset: Pick<Asset, 'sha256' | 'ext'>) {
     return readFile(this.assetPath(projectId, asset));
+  }
+
+  /**
+   * Deletes asset files nothing in the project points to (e.g. reference photos that were replaced before use).
+   * Anything a version, draft, cut, candidate, queued job or generation record mentions is kept.
+   */
+  async gc(projectId: string): Promise<{ deleted: string[]; freedBytes: number }> {
+    const referenced = referencedShas(await this.load(projectId));
+    const dir = join(this.projectDir(projectId), 'assets');
+    const deleted: string[] = [];
+    let freedBytes = 0;
+    for (const file of await readdir(dir).catch(() => [] as string[])) {
+      const m = /^([a-f0-9]{64})\.(png|jpg|webp)$/.exec(file);
+      if (!m || referenced.has(m[1])) continue;
+      const info = await stat(join(dir, file));
+      if (Date.now() - info.mtimeMs < this.gcMinAgeMs) continue;
+      // Re-check against the latest project right before deleting.
+      if (referencedShas(await this.load(projectId)).has(m[1])) continue;
+      await unlink(join(dir, file));
+      deleted.push(file);
+      freedBytes += info.size;
+    }
+    return { deleted, freedBytes };
   }
 
   /** Re-hashes every image the project references and reports any file whose content no longer matches. */
@@ -185,4 +225,24 @@ export class Store {
 
 export function sha256(bytes: Buffer | Uint8Array) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** Every asset hash the project refers to, including the inputs recorded with each generation. */
+export function referencedShas(p: Project): Set<string> {
+  const out = new Set<string>();
+  const add = (a?: { sha256: string }) => a && out.add(a.sha256);
+  add(p.draft.faceRef);
+  add(p.draft.bodyRef);
+  for (const v of p.versions) { add(v.faceRef); add(v.bodyRef); }
+  for (const cut of p.cuts) {
+    add(cut.backgroundRef);
+    add(cut.propRef);
+    for (const c of cut.candidates) {
+      add(c.image);
+      add(c.mask);
+      for (const r of c.generation.references) out.add(r.sha256);
+    }
+  }
+  for (const j of p.jobs) add(j.mask);
+  return out;
 }

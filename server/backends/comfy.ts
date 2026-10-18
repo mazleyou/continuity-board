@@ -18,10 +18,17 @@ export class ComfyBackend implements Backend {
   private readonly cancelled = new Set<string>();
   private warm = false;
 
-  constructor(url: string, opts: { timeoutMs?: number; freeOnIdle?: boolean } = {}) {
+  private readonly keepOutputs: boolean;
+
+  /**
+   * keepOutputs: also save every result in ComfyUI's output folder. Off by default: the app stores each result in
+   * the project already, and ComfyUI's temp folder (used otherwise) is cleared when ComfyUI restarts.
+   */
+  constructor(url: string, opts: { timeoutMs?: number; freeOnIdle?: boolean; keepOutputs?: boolean } = {}) {
     this.url = url.replace(/\/$/, '');
     this.timeoutMs = opts.timeoutMs ?? 15 * 60_000;
     this.freeOnIdle = opts.freeOnIdle ?? false;
+    this.keepOutputs = opts.keepOutputs ?? false;
   }
 
   async health(): Promise<Health> {
@@ -75,7 +82,7 @@ export class ComfyBackend implements Backend {
     const inpaintMask = req.inpaintMask ? await this.upload(req.inpaintMask.sha256, req.inpaintMask.bytes) : undefined;
     const graph = buildGraph({
       prompt: req.prompt, references: refs, seed: req.seed, width: req.width, height: req.height, inpaintMask,
-      filenamePrefix: `continuity-board/${req.label}`,
+      filenamePrefix: `continuity-board/${req.label}`, output: this.keepOutputs ? 'save' : 'preview',
     });
     let promptId = req.resumeId;
     const adopt = promptId ? await this.isKnown(promptId) : false;

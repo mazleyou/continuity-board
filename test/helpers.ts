@@ -10,7 +10,7 @@ import type { Project } from '../server/model.ts';
 
 export async function startApp(dataDir?: string, delayMs = 5, opts: { retryBaseMs?: number } = {}) {
   const dir = dataDir ?? await mkdtemp(join(tmpdir(), 'cb-test-'));
-  const store = new Store(dir);
+  const store = new Store(dir, { gcMinAgeMs: 0 });
   const backend = new MockBackend(delayMs);
   const { server, runner } = createApp(store, backend, resolve(import.meta.dirname, '../web'), { retryBaseMs: opts.retryBaseMs ?? 20, retryMaxMs: 200 });
   await runner.recover();

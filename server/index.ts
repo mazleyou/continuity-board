@@ -14,6 +14,7 @@ const backend = process.env.CB_BACKEND === 'mock'
     timeoutMs: Number(process.env.CB_TIMEOUT_MS ?? 15 * 60_000),
     // Unload models whenever the queue drains; helps machines that need --disable-smart-memory.
     freeOnIdle: process.env.CB_FREE_ON_IDLE === '1',
+    keepOutputs: process.env.CB_KEEP_COMFY_OUTPUTS === '1',
   });
 
 const store = new Store(resolve(process.env.CB_DATA ?? resolve(root, 'data')));

@@ -150,10 +150,12 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   route('PUT', '/api/projects/:id/draft/:slot', async (_r, { id, slot }, body) => {
     if (slot !== 'face' && slot !== 'body') throw new NotFoundError('알 수 없는 참조 슬롯');
     const asset = await store.putAsset(id, await normalizeUpload(await body()));
-    return store.update(id, (p) => {
+    const p = await store.update(id, (p) => {
       p.draft[slot === 'face' ? 'faceRef' : 'bodyRef'] = asset;
       return p;
     });
+    store.gc(id).catch(() => {});
+    return p;
   });
   route('POST', '/api/projects/:id/versions', async (_r, { id }) => store.update(id, (p) => {
     const d = p.draft;
@@ -187,10 +189,12 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   route('PUT', '/api/projects/:id/cuts/:cutId/ref/:slot', async (_r, { id, cutId, slot }, body) => {
     if (slot !== 'background' && slot !== 'prop') throw new NotFoundError('알 수 없는 참조 슬롯');
     const asset = await store.putAsset(id, await normalizeUpload(await body()));
-    return store.update(id, (p) => {
+    const p = await store.update(id, (p) => {
       findCut(p, cutId)[slot === 'background' ? 'backgroundRef' : 'propRef'] = asset;
       return p;
     });
+    store.gc(id).catch(() => {});
+    return p;
   });
   route('DELETE', '/api/projects/:id/cuts/:cutId/ref/:slot', async (_r, { id, cutId, slot }) => store.update(id, (p) => {
     const cut = findCut(p, cutId);
@@ -345,6 +349,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
     return { raw: await exportZip(store, p), type: 'application/zip', filename: `${safe}.continuity-board.zip` } satisfies Raw;
   });
   route('GET', '/api/projects/:id/verify', async (_r, { id }) => store.verify(id));
+  route('POST', '/api/projects/:id/gc', async (_r, { id }) => store.gc(id));
   route('GET', '/api/projects/:id/cuts/:cutId/candidates/:cid/graph.json', async (_r, { id, cutId, cid }) => {
     const p = await store.load(id);
     const cut = findCut(p, cutId);

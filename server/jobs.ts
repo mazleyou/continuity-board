@@ -53,6 +53,7 @@ export class JobRunner {
 
   async recover() {
     for (const { id } of await this.store.list()) {
+      await this.store.gc(id).catch(() => {});
       const queued = await this.store.update(id, (p) => {
         for (const j of p.jobs) if (j.status === 'running') j.status = 'queued';
         return p.jobs.filter((j) => j.status === 'queued').map((j) => j.id);

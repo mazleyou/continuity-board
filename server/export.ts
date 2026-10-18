@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { SCHEMA_VERSION, approvedCandidate, currentVersion, isStale, type CharacterVersion, type Cut, type Project } from './model.ts';
-import { BadRequestError, now, sha256, type Store } from './store.ts';
+import { BadRequestError, now, referencedShas, sha256, type Store } from './store.ts';
 import { validateProject } from './validate.ts';
 import { FRAME, WORKFLOW_VERSION, buildGraph, toUiWorkflow } from './workflow.ts';
 import { REFERENCE_MEGAPIXELS, editPrompt, generationPrompt, generationRefs } from './prompt.ts';
@@ -111,20 +111,12 @@ export function evaluationCsv(p: Project): string {
 /** A self-contained, re-importable package: project.json + assets + human-friendly board/cuts/workflows. */
 export async function exportZip(store: Store, p: Project): Promise<Uint8Array> {
   const files: Zippable = {};
-  const assetShas = new Set<string>();
+  // Everything the project refers to - including masks and the inputs recorded with each generation - so an
+  // imported copy is complete and passes import validation.
   const assets: Zippable = {};
-  const addAsset = async (a: { sha256: string; ext: string }) => {
-    if (assetShas.has(a.sha256)) return;
-    assetShas.add(a.sha256);
-    assets[`${a.sha256}.${a.ext}`] = new Uint8Array(await store.readAsset(p.id, a as never));
-  };
-  for (const v of p.versions) { await addAsset(v.faceRef); await addAsset(v.bodyRef); }
-  if (p.draft.faceRef) await addAsset(p.draft.faceRef);
-  if (p.draft.bodyRef) await addAsset(p.draft.bodyRef);
-  for (const cut of p.cuts) {
-    if (cut.backgroundRef) await addAsset(cut.backgroundRef);
-    if (cut.propRef) await addAsset(cut.propRef);
-    for (const c of cut.candidates) await addAsset(c.image);
+  for (const sha of referencedShas(p)) {
+    const file = await store.findAsset(p.id, sha);
+    if (file) assets[`${file.sha256}.${file.ext}`] = new Uint8Array(await store.readAsset(p.id, file));
   }
   files['project.json'] = strToU8(JSON.stringify(p, null, 2));
   files['assets'] = assets;

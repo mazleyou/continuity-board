@@ -91,6 +91,8 @@ npm run start:mock      # 입력과 시드로 결정되는 가짜 이미지를 �
 
 “무결성 확인”은 프로젝트가 참조하는 모든 이미지의 해시를 다시 계산해, 승인 파일이 바뀌지 않았음을 보여 줍니다.
 
+참조 사진을 여러 번 바꿔 올리면, 아무 데서도 쓰지 않는 파일은 10분이 지난 뒤 자동으로 지웁니다(앱 시작 시, 참조 교체 시, `POST /api/projects/{id}/gc`). 기준 버전, 후보, 마스크, 각 생성에 실제로 쓰인 참조는 지우지 않습니다. 내보내기 ZIP에도 이 파일을 모두 넣으므로, 가져온 프로젝트에서도 “어떤 참조로 만들었는지”가 그대로 남습니다.
+
 ## ComfyUI 워크플로
 
 [`workflows/`](workflows/)에 세 워크플로를 **UI 형식**(ComfyUI에 끌어 놓아 편집)과 **API 형식**(`POST /prompt`)으로 공개합니다. 공식 템플릿 `image_flux2_klein_image_edit_4b_distilled`를 참조 N장으로 일반화한 것입니다.
@@ -132,6 +134,7 @@ C. 영역 지정 수정
 | `CB_STEPS` / `CB_CFG` | 프리셋 값 | |
 | `CB_TIMEOUT_MS` | `900000` | 작업 1건의 제한 시간 |
 | `CB_FREE_ON_IDLE` | 꺼짐 | `1`이면 대기열이 빌 때 ComfyUI에 모델 해제(`/free`)를 요청. 메모리가 작은 장비용 |
+| `CB_KEEP_COMFY_OUTPUTS` | 꺼짐 | `1`이면 결과를 ComfyUI의 `output/`에도 저장합니다. 기본값은 ComfyUI 임시 폴더(재시작 시 삭제)를 씁니다. 결과는 언제나 프로젝트에 저장됩니다 |
 | `CB_ALLOWED_HOSTS` | (없음) | `localhost` 외에 앱에 접속할 호스트 이름 (쉼표로 구분) |
 
 | 프리셋 | 모델 | 설정 | 설치 |
@@ -181,7 +184,7 @@ ComfyUI와의 연결에는 ComfyUI 자체 API(`/upload/image`, `/prompt`, `/ws`,
 ## 테스트
 
 ```bash
-npm test               # 36개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
+npm test               # 39개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
 npm run typecheck
 npm run report         # 모든 프로젝트를 모아 평가 보고서 (기획서 목표 대비) 생성
 npm run smoke:comfy    # 실제 ComfyUI: 기준 이미지 → 6컷 → 수정 → 영역 수정 → 무결성 → 내보내기

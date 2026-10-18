@@ -61,6 +61,8 @@ export interface GraphParams {
    * Reference 1 must already be width × height.
    */
   inpaintMask?: string;
+  /** 'save' writes to ComfyUI's output folder (templates); 'preview' uses its temp folder, cleared on restart. */
+  output?: 'save' | 'preview';
 }
 
 export function buildGraph(params: GraphParams): ApiGraph {
@@ -113,7 +115,8 @@ export function buildGraph(params: GraphParams): ApiGraph {
   const noise = add('13', 'RandomNoise', { noise_seed: seed }, 'Seed');
   const samples = add('15', 'SamplerCustomAdvanced', { noise, guider, sampler, sigmas, latent_image: latentImage });
   const image = add('16', 'VAEDecode', { samples, vae });
-  add('17', 'SaveImage', { images: image, filename_prefix: params.filenamePrefix ?? 'continuity-board/cut' }, 'Output');
+  if (params.output === 'preview') add('17', 'PreviewImage', { images: image }, 'Output');
+  else add('17', 'SaveImage', { images: image, filename_prefix: params.filenamePrefix ?? 'continuity-board/cut' }, 'Output');
   return g;
 }
 
@@ -152,6 +155,7 @@ const SPECS: Record<string, NodeSpec> = {
   },
   VAEDecode: { inputs: [['samples', 'LATENT'], ['vae', 'VAE']], widgets: [], outputs: [['IMAGE', 'IMAGE']] },
   SaveImage: { inputs: [['images', 'IMAGE']], widgets: ['filename_prefix'], outputs: [] },
+  PreviewImage: { inputs: [['images', 'IMAGE']], widgets: [], outputs: [] },
 };
 
 const COLUMN: Record<string, number> = {
@@ -162,7 +166,7 @@ const COLUMN: Record<string, number> = {
   ReferenceLatent: 3,
   CFGGuider: 4,
   SamplerCustomAdvanced: 5,
-  VAEDecode: 6, SaveImage: 7,
+  VAEDecode: 6, SaveImage: 7, PreviewImage: 7,
 };
 
 export function toUiWorkflow(api: ApiGraph, title: string) {
