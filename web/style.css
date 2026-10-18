@@ -377,3 +377,9 @@ details.box summary { cursor: pointer; margin: 0; }
 
 .kbd-hint { margin-left: auto; font-size: 11px; color: #bdb5a2; }
 .kbd-hint kbd { font: 600 10px var(--mono); border: 1px solid #4a463d; border-radius: 3px; padding: 0 4px; }
+
+.seg.mini button { padding: 2px 8px; font-size: 12px; }
+.seg.mini button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.mask-cursor { position: absolute; pointer-events: none; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px var(--seal); }
+.mask-cursor.erase { border-style: dashed; }
+.mask-stage { overflow: hidden; }

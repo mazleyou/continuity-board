@@ -21,7 +21,7 @@ const state = {
   pollTimer: null,
   events: null,
   health: null,
-  mask: { on: false, dirty: false, canvas: null },
+  mask: { on: false, dirty: false, canvas: null, cursor: null, tool: 'paint', undo: [] },
 };
 
 // ---------- helpers ----------
@@ -393,7 +393,7 @@ function renderCompare(cut) {
   const sel = selectedCandidate(cut);
   let mode = state.mask.on ? 'single' : state.compareMode;
   if ((mode === 'side' || mode === 'swipe') && (!approved || !sel || approved === sel)) mode = 'single';
-  $$('.seg button').forEach((b) => {
+  $$('.compare-toolbar .seg button').forEach((b) => {
     b.classList.toggle('on', b.dataset.mode === state.compareMode);
     b.setAttribute('aria-pressed', String(b.dataset.mode === state.compareMode));
   });
@@ -420,7 +420,7 @@ function renderCompare(cut) {
       const img = $('img', fig);
       const stage = h('div', { class: 'mask-stage' });
       img.before(stage);
-      stage.append(img, maskCanvas());
+      stage.append(img, maskCanvas(), state.mask.cursor);
     }
     box.replaceChildren(fig);
   }
@@ -433,13 +433,15 @@ const MASK_W = 1344, MASK_H = 768;
 function maskCanvas() {
   if (state.mask.canvas) return state.mask.canvas;
   const c = h('canvas', { width: MASK_W, height: MASK_H, class: 'mask-canvas', 'aria-label': '수정할 영역을 칠하는 캔버스' });
-  const ctx = c.getContext('2d');
+  // Read back after every stroke (undo snapshots, "anything painted?"), so keep it CPU-side.
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   let last = null;
   const pos = (e) => {
     const r = c.getBoundingClientRect();
     return [(e.clientX - r.left) * MASK_W / r.width, (e.clientY - r.top) * MASK_H / r.height];
   };
   const paint = (a, b) => {
+    ctx.globalCompositeOperation = state.mask.tool === 'erase' ? 'destination-out' : 'source-over';
     ctx.strokeStyle = 'rgb(232, 60, 50)';
     ctx.lineWidth = Number($('#mask-brush').value);
     ctx.lineCap = 'round';
@@ -447,22 +449,61 @@ function maskCanvas() {
     ctx.moveTo(...a);
     ctx.lineTo(...b);
     ctx.stroke();
-    state.mask.dirty = true;
-    $('#edit-run').textContent = '영역 수정 후보 만들기';
   };
-  c.addEventListener('pointerdown', (e) => { c.setPointerCapture(e.pointerId); last = pos(e); paint(last, last); });
-  c.addEventListener('pointermove', (e) => { if (!last) return; const p = pos(e); paint(last, p); last = p; });
-  const end = () => { last = null; };
+  // Circle showing the real brush size under the pointer.
+  const cursor = h('div', { class: 'mask-cursor', hidden: true });
+  const moveCursor = (e) => {
+    const r = c.getBoundingClientRect();
+    const d = Number($('#mask-brush').value) * r.width / MASK_W;
+    Object.assign(cursor.style, { width: `${d}px`, height: `${d}px`, left: `${e.clientX - r.left - d / 2}px`, top: `${e.clientY - r.top - d / 2}px` });
+    cursor.classList.toggle('erase', state.mask.tool === 'erase');
+    cursor.hidden = false;
+  };
+  c.addEventListener('pointerdown', (e) => {
+    c.setPointerCapture(e.pointerId);
+    state.mask.undo.push(ctx.getImageData(0, 0, MASK_W, MASK_H));
+    if (state.mask.undo.length > 30) state.mask.undo.shift();
+    last = pos(e);
+    paint(last, last);
+  });
+  c.addEventListener('pointermove', (e) => { moveCursor(e); if (!last) return; const p = pos(e); paint(last, p); last = p; });
+  c.addEventListener('pointerleave', () => { cursor.hidden = true; });
+  const end = () => { if (last) updateMaskState(); last = null; };
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
   state.mask.canvas = c;
+  state.mask.cursor = cursor;
   return c;
+}
+
+/** Recomputes whether anything is painted (after strokes, erasing or undo) and labels the edit button. */
+function updateMaskState() {
+  const c = state.mask.canvas;
+  let painted = false;
+  if (c) {
+    const data = c.getContext('2d').getImageData(0, 0, MASK_W, MASK_H).data;
+    for (let i = 3; i < data.length; i += 4) if (data[i]) { painted = true; break; }
+  }
+  state.mask.dirty = painted;
+  $('#edit-run').textContent = painted ? '영역 수정 후보 만들기' : '수정 후보 만들기';
+  $('#mask-undo').disabled = !state.mask.undo.length;
+}
+
+function undoMask() {
+  const prev = state.mask.undo.pop();
+  if (prev && state.mask.canvas) state.mask.canvas.getContext('2d').putImageData(prev, 0, 0);
+  updateMaskState();
+}
+
+function setMaskTool(tool) {
+  state.mask.tool = tool;
+  for (const b of $$('[data-mask-tool]')) b.setAttribute('aria-pressed', String(b.dataset.maskTool === tool));
 }
 
 function clearMask() {
   if (state.mask.canvas) state.mask.canvas.getContext('2d').clearRect(0, 0, MASK_W, MASK_H);
-  state.mask.dirty = false;
-  $('#edit-run').textContent = '수정 후보 만들기';
+  state.mask.undo = [];
+  updateMaskState();
 }
 
 function setMaskMode(on) {
@@ -741,6 +782,8 @@ function wire() {
   }));
   $('#mask-toggle').addEventListener('click', () => setMaskMode(!state.mask.on));
   $('#mask-clear').addEventListener('click', clearMask);
+  $('#mask-undo').addEventListener('click', undoMask);
+  $$('[data-mask-tool]').forEach((b) => b.addEventListener('click', () => setMaskTool(b.dataset.maskTool)));
 
   $('#generate-missing').addEventListener('click', () => guard(async () => {
     const p = await api('POST', `/api/projects/${P().id}/generate-missing`, { count: Number($('#gen-count').value) });
@@ -755,6 +798,11 @@ function wire() {
   // Review shortcuts: ←/→ change cut, 1–9 pick a candidate, A approves it. Ignored while typing or painting.
   dlg.addEventListener('keydown', (e) => {
     const t = e.target;
+    if (state.mask.on && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !t.matches('input, textarea')) {
+      e.preventDefault();
+      undoMask();
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey || t.matches('input, textarea, select, [contenteditable]')) return;
     const cut = dialogCut();
     if (!cut) return;
@@ -778,7 +826,7 @@ function wire() {
     const next = P().cuts[(idx + 6) % 6];
     openDialog(next.id);
   }));
-  $$('.seg button').forEach((b) => b.addEventListener('click', () => {
+  $$('.compare-toolbar .seg button').forEach((b) => b.addEventListener('click', () => {
     state.compareMode = b.dataset.mode;
     $('#compare').dataset.key = '';
     renderCompare(dialogCut());

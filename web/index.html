@@ -144,8 +144,13 @@
           <div class="mask-row">
             <button type="button" id="mask-toggle" class="btn ghost sm" aria-pressed="false">영역 칠하기</button>
             <div id="mask-tools" class="mask-tools" hidden>
-              <label class="small">붓 <input id="mask-brush" type="range" min="16" max="160" value="60" aria-label="붓 크기"></label>
-              <button type="button" id="mask-clear" class="linkish small">지우기</button>
+              <div class="seg mini" role="group" aria-label="칠하기 도구">
+                <button type="button" data-mask-tool="paint" aria-pressed="true">붓</button>
+                <button type="button" data-mask-tool="erase" aria-pressed="false">지우개</button>
+              </div>
+              <label class="small">크기 <input id="mask-brush" type="range" min="16" max="160" value="60" aria-label="붓 크기"></label>
+              <button type="button" id="mask-undo" class="linkish small" disabled title="Cmd/Ctrl+Z">되돌리기</button>
+              <button type="button" id="mask-clear" class="linkish small">모두 지우기</button>
             </div>
           </div>
           <div class="row">
