@@ -20,7 +20,7 @@ const backend = new ComfyBackend(process.env.COMFY_URL ?? 'http://127.0.0.1:8188
 const health = await backend.health();
 if (!health.ok) throw new Error(health.detail + (health.missingModels ? `: ${health.missingModels.join(', ')}` : ''));
 
-const timings: Record<string, number> = {};
+const timings: Record<string, number | string> = {};
 async function t2i(name: string, prompt: string, width: number, height: number) {
   const existing = await readFile(join(out, `${name}.png`)).catch(() => null);
   if (existing) return existing;
@@ -107,7 +107,6 @@ for (let px = 0; px < alpha.length; px++) {
   if (!same && alpha[px] === 0) outsideChanged++;
   if (!same && alpha[px] === 255) insideChanged++;
 }
-timings[`cut3:masked-edit`] = masked.generation.durationMs;
 
 const verify = await (await fetch(`${base}/api/projects/${p.id}/verify`)).json();
 await writeFile(join(out, 'board.png'), Buffer.from(await (await fetch(`${base}/api/projects/${p.id}/board.png`)).arrayBuffer()));
@@ -115,7 +114,9 @@ await writeFile(join(out, 'export.zip'), Buffer.from(await (await fetch(`${base}
 for (const cut of p.cuts) {
   for (const c of cut.candidates) {
     await writeFile(join(out, `cut${cut.index + 1}-${c.kind}-${c.id}.png`), await store.readAsset(p.id, c.image));
-    timings[`cut${cut.index + 1}:${c.kind}${c.generation.coldStart ? ' (cold)' : ''}`] = c.generation.durationMs;
+    const ph = c.generation.phases ?? {};
+    timings[`cut${cut.index + 1}:${c.kind}${c.mask ? '-masked' : ''}${c.generation.coldStart ? ' (cold)' : ''}`] =
+      `${c.generation.durationMs}ms (prepare ${ph.prepareMs ?? '?'} / sample ${ph.sampleMs ?? '?'} / finish ${ph.finishMs ?? '?'})`;
   }
 }
 const report = {

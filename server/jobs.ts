@@ -253,6 +253,7 @@ export class JobRunner {
         graph: result.graph,
         durationMs: Date.now() - t0,
         coldStart: result.coldStart,
+        phases: result.phases,
       },
     };
   }

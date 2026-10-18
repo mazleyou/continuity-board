@@ -78,7 +78,9 @@ export interface GenerationRecord {
   /** The exact API-format graph submitted to ComfyUI (null for the mock backend). */
   graph: Record<string, unknown> | null;
   durationMs: number;
+  /** Whether the backend had to load model weights for this run (see Phases in backends/types.ts). */
   coldStart: boolean;
+  phases?: { queueMs?: number; prepareMs?: number; sampleMs?: number; finishMs?: number; runMs?: number };
 }
 
 export interface Candidate {

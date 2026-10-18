@@ -517,7 +517,10 @@ function renderMeta(cut) {
       c.instruction ? [h('dt', {}, '지시'), h('dd', {}, c.instruction)] : null,
       h('dt', {}, '기준'), h('dd', {}, `v${ver?.number ?? '?'}`, ver && ver.id !== currentVersion()?.id ? h('span', { class: 'warn' }, ' · 이전 기준') : null),
       h('dt', {}, '시드'), h('dd', { class: 'mono' }, g.seed),
-      h('dt', {}, '시간'), h('dd', {}, fmtSec(g.durationMs), g.coldStart ? h('span', { class: 'muted' }, ' · 첫 실행(모델 로딩 포함)') : null),
+      h('dt', {}, '시간'), h('dd', {}, fmtSec(g.durationMs),
+        g.coldStart ? h('span', { class: 'muted' }, ' · 모델을 불러온 실행') : h('span', { class: 'muted' }, ' · 모델이 이미 올라와 있던 실행'),
+        g.phases?.sampleMs !== undefined ? h('div', { class: 'small muted' },
+          `준비 ${fmtSec(g.phases.prepareMs ?? 0)} · 그리기 ${fmtSec(g.phases.sampleMs)} · 마무리 ${fmtSec(g.phases.finishMs ?? 0)}${g.phases.queueMs ? ` · ComfyUI 대기 ${fmtSec(g.phases.queueMs)}` : ''}`) : null),
       h('dt', {}, '실행'), h('dd', { class: 'mono small' }, `${g.backend} · ${g.model.diffusion} · ${g.steps} steps · wf ${g.workflow.version}`)),
     h('div', { class: 'refs-used' }, g.references.map((r, i) => {
       const a = { sha256: r.sha256, ext: r.role === 'cut' ? cut.candidates.find((x) => x.image.sha256 === r.sha256)?.image.ext ?? 'png' : findExt(r.sha256) };

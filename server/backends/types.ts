@@ -24,10 +24,25 @@ export interface RunRequest {
   onProgress?: (p: Progress) => void;
 }
 
+/** Where the time went, measured from the backend's execution events (fields are absent when not observable). */
+export interface Phases {
+  /** Waiting in the backend's own queue. */
+  queueMs?: number;
+  /** Text/reference encoding, including any model loading that happens before sampling. */
+  prepareMs?: number;
+  sampleMs?: number;
+  /** Decoding and saving. */
+  finishMs?: number;
+  /** Backend execution time from start to success, by the backend's clock. */
+  runMs?: number;
+}
+
 export interface RunResult {
   image: Buffer;
   graph: ApiGraph | null;
+  /** True when this run had to load model weights (loader nodes executed instead of being cached). */
   coldStart: boolean;
+  phases?: Phases;
 }
 
 export interface Health {

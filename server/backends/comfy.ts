@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { LOADER, MODELS, buildGraph, type ApiGraph } from '../workflow.ts';
-import { BackendUnavailableError, CancelledError, type Backend, type Health, type Progress, type RunRequest, type RunResult } from './types.ts';
+import { BackendUnavailableError, CancelledError, type Backend, type Health, type Phases, type Progress, type RunRequest, type RunResult } from './types.ts';
 
 type ImageRef = { filename: string; subfolder: string; type: string };
 
@@ -56,8 +56,6 @@ export class ComfyBackend implements Backend {
       prompt: req.prompt, references: refs, seed: req.seed, width: req.width, height: req.height, inpaintMask,
       filenamePrefix: `continuity-board/${req.label}`,
     });
-    const coldStart = !this.warm;
-
     let promptId = req.resumeId;
     const adopt = promptId ? await this.isKnown(promptId) : false;
     if (!adopt) promptId = crypto.randomUUID();
@@ -65,6 +63,7 @@ export class ComfyBackend implements Backend {
     const watch = this.watch(id, graph, req.onProgress);
     try {
       await watch.ready;
+      const submittedAt = Date.now();
       if (!adopt) {
         await req.onSubmit?.(id);
         const queued = await this.json('/prompt', {
@@ -72,9 +71,10 @@ export class ComfyBackend implements Backend {
         });
         if (queued.error) throw new Error(formatComfyError(queued));
       }
-      const image = await this.waitForImage(id, watch.done);
+      const { image, messages } = await this.waitForImage(id, watch.done);
+      const { coldStart, phases } = timing(messages, watch.marks, adopt ? undefined : submittedAt, !this.warm);
       this.warm = true;
-      return { image, graph, coldStart };
+      return { image, graph, coldStart, phases };
     } finally {
       watch.close();
       this.cancelled.delete(id);
@@ -119,6 +119,8 @@ export class ComfyBackend implements Backend {
     const done = new Promise<{ error?: Error }>((r) => (settle = r));
     const total = Object.keys(graph).length;
     const seen = new Set<string>();
+    // Arrival times of execution events on our clock (the backend's own timestamps are used where it sends them).
+    const marks: Marks = {};
     let ws: WebSocket | null = null;
     let ready: Promise<void> = Promise.resolve();
     try {
@@ -136,8 +138,13 @@ export class ComfyBackend implements Backend {
         try { msg = JSON.parse(ev.data); } catch { return; }
         const d = msg.data ?? {};
         if (d.prompt_id !== id) return;
+        if (msg.type === 'execution_start') marks.start = Date.now();
         if (msg.type === 'executing' && d.node) {
           seen.add(d.node);
+          if (LOADER_NODES.includes(d.node)) marks.loadersRan = true;
+          const kind = graph[d.node]?.class_type;
+          if (kind === 'SamplerCustomAdvanced') marks.sampler = Date.now();
+          if (kind === 'VAEDecode' && marks.sampler && !marks.decode) marks.decode = Date.now();
           const cls = graph[d.node]?.class_type ?? '';
           const phase = /Loader/.test(cls) ? '모델 불러오는 중' : cls === 'SamplerCustomAdvanced' ? '그리는 중'
             : /VAEDecode|SaveImage/.test(cls) ? '마무리 중' : '참조 준비 중';
@@ -145,6 +152,7 @@ export class ComfyBackend implements Backend {
         } else if (msg.type === 'progress' && d.max) {
           onProgress?.({ fraction: 0.3 + 0.6 * (d.value / d.max), phase: `그리는 중 ${d.value}/${d.max}` });
         } else if (msg.type === 'execution_success') {
+          marks.end = Date.now();
           settle({});
         } else if (msg.type === 'execution_error') {
           settle({ error: new Error(`ComfyUI 실행 오류 (${d.node_type ?? '?'}): ${d.exception_message ?? ''}`.trim()) });
@@ -155,10 +163,10 @@ export class ComfyBackend implements Backend {
     } catch {
       // No websocket: the /history poll below still delivers the result.
     }
-    return { done, ready, close: () => ws?.close() };
+    return { done, ready, marks, close: () => ws?.close() };
   }
 
-  private async waitForImage(id: string, wsDone: Promise<{ error?: Error }>): Promise<Buffer> {
+  private async waitForImage(id: string, wsDone: Promise<{ error?: Error }>): Promise<{ image: Buffer; messages: [string, any][] }> {
     const ws: { result?: { error?: Error } } = {};
     wsDone.then((r) => (ws.result = r));
     const deadline = Date.now() + this.timeoutMs;
@@ -178,7 +186,7 @@ export class ComfyBackend implements Backend {
           const q = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder, type: img.type });
           const res = await this.fetch(`/view?${q}`);
           if (!res.ok) throw new Error(`이미지 다운로드 실패: HTTP ${res.status}`);
-          return Buffer.from(await res.arrayBuffer());
+          return { image: Buffer.from(await res.arrayBuffer()), messages: status.messages ?? [] };
         }
       }
       if (this.cancelled.has(id) && !(await this.isKnown(id))) throw new CancelledError();
@@ -224,4 +232,28 @@ export function formatComfyError(body: any): string {
   const nodeErrors = Object.entries<any>(body.node_errors ?? {})
     .map(([id, e]) => `${e.class_type}#${id}: ${e.errors?.map((x: any) => `${x.message} ${x.details ?? ''}`.trim()).join(', ')}`);
   return [`ComfyUI가 워크플로를 거부했습니다: ${body.error?.message ?? ''}`, ...nodeErrors].join(' / ');
+}
+
+/** Loader nodes in graphs built by workflow.ts (UNET/text encoder/VAE). */
+const LOADER_NODES = ['1', '2', '3'];
+
+interface Marks { start?: number; sampler?: number; decode?: number; end?: number; loadersRan?: boolean }
+
+/**
+ * Cold start = the loader nodes actually executed in this prompt. ComfyUI reports cached nodes in
+ * "execution_cached" (also kept in /history), so this holds even when the websocket was not available.
+ */
+export function timing(messages: [string, any][], marks: Marks, submittedAt: number | undefined, fallbackCold: boolean): { coldStart: boolean; phases: Phases } {
+  const msg = (type: string) => messages.find((m) => m[0] === type)?.[1];
+  const cached: string[] | undefined = msg('execution_cached')?.nodes;
+  const coldStart = marks.loadersRan ?? (cached ? !LOADER_NODES.slice(0, 2).every((n) => cached.includes(n)) : fallbackCold);
+  const startTs = msg('execution_start')?.timestamp;
+  const endTs = msg('execution_success')?.timestamp;
+  const phases: Phases = {};
+  if (startTs && endTs) phases.runMs = endTs - startTs;
+  if (submittedAt && marks.start) phases.queueMs = Math.max(0, marks.start - submittedAt);
+  if (marks.start && marks.sampler) phases.prepareMs = marks.sampler - marks.start;
+  if (marks.sampler && marks.decode) phases.sampleMs = marks.decode - marks.sampler;
+  if (marks.decode && marks.end) phases.finishMs = marks.end - marks.decode;
+  return { coldStart, phases };
 }

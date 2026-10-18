@@ -10,7 +10,7 @@ import { CancelledError, type Progress, type RunRequest } from '../server/backen
 import { MODELS } from '../server/workflow.ts';
 
 /** Minimal stand-in for ComfyUI's HTTP + websocket API, enough to exercise ComfyBackend end to end. */
-async function fakeComfy(opts: { mode?: 'ok' | 'invalid' | 'error' | 'slow'; websocket?: boolean; models?: string[] } = {}) {
+async function fakeComfy(opts: { mode?: 'ok' | 'invalid' | 'error' | 'slow'; websocket?: boolean; models?: string[]; cachedLoaders?: boolean } = {}) {
   const mode = opts.mode ?? 'ok';
   const image = await sharp({ create: { width: 64, height: 36, channels: 3, background: '#3a6' } }).png().toBuffer();
   const sockets: Duplex[] = [];
@@ -19,6 +19,7 @@ async function fakeComfy(opts: { mode?: 'ok' | 'invalid' | 'error' | 'slow'; web
   const posted: { prompt_id: string; prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }> }[] = [];
   const uploads: string[] = [];
   const timers: NodeJS.Timeout[] = [];
+  const runMessages = new Map<string, [string, object][]>();
 
   const send = (type: string, data: unknown) => {
     const payload = Buffer.from(JSON.stringify({ type, data }));
@@ -52,16 +53,25 @@ async function fakeComfy(opts: { mode?: 'ok' | 'invalid' | 'error' | 'slow'; web
       const id = body.prompt_id;
       known.add(id);
       const step = mode === 'slow' ? 300 : 20;
+      const t0 = Date.now();
+      const cached = opts.cachedLoaders ? ['1', '2', '3'] : [];
+      const messages: [string, object][] = [
+        ['execution_start', { prompt_id: id, timestamp: t0 + step }],
+        ['execution_cached', { prompt_id: id, nodes: cached, timestamp: t0 + step }],
+      ];
+      runMessages.set(id, messages);
       const plan: [number, () => void][] = [
-        [1, () => send('executing', { node: '1', prompt_id: id })],
+        [1, () => { send('execution_start', { prompt_id: id }); send('execution_cached', { prompt_id: id, nodes: cached }); }],
+        [1.5, () => { if (!opts.cachedLoaders) send('executing', { node: '1', prompt_id: id }); }],
         [2, () => send('executing', { node: '15', prompt_id: id })],
         ...[1, 2, 3, 4].map((v) => [2 + v, () => send('progress', { value: v, max: 4, prompt_id: id, node: '15' })] as [number, () => void]),
+        [6.5, () => send('executing', { node: '16', prompt_id: id })],
         [7, () => {
           if (mode === 'error') {
             send('execution_error', { prompt_id: id, node_type: 'VAEDecode', exception_message: 'MPS out of memory' });
             finish(id, { status_str: 'error', completed: false, messages: [['execution_error', { node_type: 'VAEDecode', exception_message: 'MPS out of memory' }]] });
           } else {
-            finish(id, { status_str: 'success', completed: true, messages: [] }, { 17: { images: [{ filename: 'out.png', subfolder: '', type: 'output' }] } });
+            finish(id, { status_str: 'success', completed: true, messages: [...messages, ['execution_success', { prompt_id: id, timestamp: t0 + 7 * step }]] }, { 17: { images: [{ filename: 'out.png', subfolder: '', type: 'output' }] } });
             send('execution_success', { prompt_id: id });
           }
         }],
@@ -201,6 +211,35 @@ test('ComfyUI 백엔드: 상태 확인이 없는 모델 파일을 알려 준다'
     const h = await new ComfyBackend(comfy.url).health();
     assert.equal(h.ok, false);
     assert.deepEqual(h.missingModels, [MODELS.diffusion, MODELS.textEncoder]);
+  } finally {
+    await comfy.close();
+  }
+});
+
+test('ComfyUI 백엔드: 모델을 실제로 불러왔는지로 cold를 판정하고 단계별 시간을 잰다', async () => {
+  for (const cachedLoaders of [false, true]) {
+    const comfy = await fakeComfy({ cachedLoaders });
+    try {
+      // A fresh backend object every time: "first run since the app started" must not decide cold/warm.
+      const r = await new ComfyBackend(comfy.url).run(await request());
+      assert.equal(r.coldStart, !cachedLoaders, `cachedLoaders=${cachedLoaders}`);
+      const ph = r.phases!;
+      for (const k of ['queueMs', 'prepareMs', 'sampleMs', 'finishMs', 'runMs'] as const) assert.equal(typeof ph[k], 'number', k);
+      assert.ok(ph.sampleMs! > ph.finishMs!, 'sampling is the longest phase in the fake');
+      assert.equal(ph.runMs, 6 * 20);
+    } finally {
+      await comfy.close();
+    }
+  }
+});
+
+test('ComfyUI 백엔드: 웹소켓이 없어도 /history의 캐시 정보로 cold를 판정한다', async () => {
+  const comfy = await fakeComfy({ websocket: false, cachedLoaders: true });
+  try {
+    const r = await new ComfyBackend(comfy.url).run(await request());
+    assert.equal(r.coldStart, false);
+    assert.equal(r.phases!.sampleMs, undefined, 'phase split needs the websocket');
+    assert.equal(r.phases!.runMs, 120);
   } finally {
     await comfy.close();
   }

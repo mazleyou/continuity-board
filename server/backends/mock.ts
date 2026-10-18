@@ -68,7 +68,8 @@ export class MockBackend implements Backend {
     const image = await base.composite(layers).png().toBuffer();
     const coldStart = !this.warm;
     this.warm = true;
-    return { image, graph: null, coldStart };
+    const d = this.delayMs;
+    return { image, graph: null, coldStart, phases: { queueMs: 0, prepareMs: Math.round(d * 0.25), sampleMs: Math.round(d * 0.7), finishMs: Math.round(d * 0.05), runMs: d } };
   }
 }
 

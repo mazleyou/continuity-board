@@ -90,13 +90,14 @@ export function templateWorkflows(): Record<string, unknown> {
 }
 
 export function evaluationCsv(p: Project): string {
-  const rows: unknown[][] = [['cut', 'candidate', 'kind', 'character_version', 'approved', 'reviewer', 'face', 'hair', 'outfit', 'props', 'scene', 'note', 'duration_ms', 'cold_start', 'seed']];
+  const rows: unknown[][] = [['cut', 'candidate', 'kind', 'character_version', 'approved', 'reviewer', 'face', 'hair', 'outfit', 'props', 'scene', 'note', 'duration_ms', 'cold_start', 'prepare_ms', 'sample_ms', 'finish_ms', 'seed']];
   const yn = (b?: boolean) => (b === undefined ? '' : b ? 'pass' : 'fail');
   for (const cut of p.cuts) {
     for (const c of cut.candidates) {
       const ver = p.versions.find((v) => v.id === c.characterVersionId)?.number ?? '';
       const base = [cut.index + 1, c.id, c.kind, `v${ver}`, c.id === cut.approvedCandidateId ? 'yes' : 'no'];
-      const tail = [c.generation.durationMs, c.generation.coldStart, c.generation.seed];
+      const ph = c.generation.phases ?? {};
+      const tail = [c.generation.durationMs, c.generation.coldStart, ph.prepareMs ?? '', ph.sampleMs ?? '', ph.finishMs ?? '', c.generation.seed];
       if (!c.reviews.length) rows.push([...base, '', '', '', '', '', '', '', ...tail]);
       for (const r of c.reviews) {
         const k = r.checklist;
