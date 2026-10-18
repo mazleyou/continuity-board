@@ -80,3 +80,28 @@ test('수정 지시 항목은 수정 후보에서만 저장된다 (API는 받되
     await app.close();
   }
 });
+
+test('평가 보고서 페이지: 앱에서 바로 열리고, 사용자 입력(제목·평가자 이름)은 이스케이프된다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    p = await app.call('PATCH', `/api/projects/${p.id}`, { title: '<img src=x onerror=alert(1)>' });
+    await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/generate`, {});
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[0].id}/candidates/${p.cuts[0].candidates[0].id}/reviews`, {
+      reviewer: '<script>x</script>', checklist: ID, note: '',
+    });
+    const res = await fetch(`${app.base}/api/report`);
+    assert.match(res.headers.get('content-type')!, /text\/html/);
+    const html = await res.text();
+    assert.doesNotMatch(html, /<img src=x|<script>x/);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.match(html, /1\/1 = 100\.0%/);
+    assert.match(html, /모든 프로젝트\(1개\)의 이미지 해시가 기록과 일치/);
+    const md = await fetch(`${app.base}/api/report?format=md`);
+    assert.match(md.headers.get('content-disposition')!, /evaluation-report\.md/);
+  } finally {
+    await app.close();
+  }
+});

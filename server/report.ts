@@ -138,3 +138,45 @@ export function renderMarkdown(r: Report, generatedAt = new Date().toISOString()
     ...r.cuts.detail.map((d) => `| ${d.project} | ${d.cut} | ${d.tried} | ${d.verdict === 'pass' ? '통과' : d.verdict === 'fail' ? '불합격' : '미평가'} |`));
   return lines.join('\n') + '\n';
 }
+
+const esc = (s: unknown) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** The same report as a standalone page, for reviewers working in the browser. All user text is escaped. */
+export function renderHtml(r: Report, generatedAt = new Date().toISOString()): string {
+  const verdict = (ok: boolean | null) => (ok === null ? '<span class="na">판정 불가 (평가 없음)</span>' : ok ? '<span class="ok">✅ 목표 달성</span>' : '<span class="ng">❌ 목표 미달</span>');
+  const row = (cells: unknown[]) => `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+  const bad = r.integrity?.filter((x) => !x.ok) ?? [];
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>평가 보고서 · Continuity Board</title>
+<style>
+  body { font: 15px/1.6 'IBM Plex Sans KR', 'Apple SD Gothic Neo', sans-serif; color: #2a2540; background: #f6f1fb; margin: 0; padding: 24px 16px; }
+  main { max-width: 960px; margin: 0 auto; background: #fffcf8; border-radius: 24px; padding: 28px; box-shadow: 8px 10px 22px rgba(91,79,196,.16); }
+  h1 { margin: 0 0 4px; font-size: 26px; } h2 { font-size: 18px; margin: 28px 0 8px; }
+  .meta, .rule { color: #5f5873; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2daf0; vertical-align: top; }
+  th { background: #ece6f8; } .ok { color: #1f6b42; font-weight: 700; } .ng { color: #a3271f; font-weight: 700; } .na { color: #5f5873; }
+  a { color: #5b4fc4; }
+</style></head><body><main>
+<h1>평가 보고서</h1>
+<p class="meta">${esc(generatedAt)} · 프로젝트 ${r.projects}개 · <a href="/api/report?format=md" download="evaluation-report.md">Markdown으로 받기</a></p>
+<p class="rule">판정 규칙: 한 명 이상이 판정했고 판정한 평가자가 모두 통과를 준 항목만 통과입니다. 한 명이라도 불합격을 주면 불합격입니다.</p>
+<h2>목표 대비</h2>
+<table><thead><tr><th>기준</th><th>목표</th><th>결과</th><th>판정</th></tr></thead><tbody>
+${row([`컷 (첫 ${TARGETS.candidatesPerCut}개 후보 안에서 얼굴·헤어·의상 통과)`, `${pct(TARGETS.cutPassRate)} (18컷 중 15컷)`, `${r.cuts.pass}/${r.cuts.pass + r.cuts.fail} = ${pct(r.cuts.rate)}${r.cuts.unreviewed ? ` · 미평가 ${r.cuts.unreviewed}` : ''}`, verdict(r.cuts.meetsTarget)])}
+${row([`수정 (지시 반영 + 얼굴·헤어·의상 유지)`, `${pct(TARGETS.editPassRate)} (6건 중 4건)`, `${r.edits.pass}/${r.edits.pass + r.edits.fail} = ${pct(r.edits.rate)}${r.edits.unreviewed ? ` · 미평가 ${r.edits.unreviewed}` : ''}`, verdict(r.edits.meetsTarget)])}
+${row(['평가자 수', `${TARGETS.minReviewers}명 이상`, `${r.reviewers.names.length}명 (${esc(r.reviewers.names.join(', ') || '없음')})`, verdict(r.reviewers.names.length >= TARGETS.minReviewers)])}
+</tbody></table>
+<h2>평가자 일치도</h2>
+<p>평가된 후보 ${r.reviewers.candidatesReviewed}개 중 ${r.reviewers.withTwoOrMore}개를 2명 이상이 평가했습니다. 2명 이상이 판정한 항목 ${r.reviewers.itemsCompared}개 중 ${r.reviewers.itemsAgreed}개(${pct(r.reviewers.agreement)})가 일치했습니다.</p>
+<h2>처리 시간 (중앙값)</h2>
+<table><thead><tr><th>프리셋</th><th>종류</th><th>모델 로딩</th><th>건수</th><th>중앙값</th></tr></thead><tbody>
+${r.timing.map((t) => row([esc(t.preset), t.kind === 'edit' ? '수정' : '생성', t.cold ? '불러옴 (cold)' : '이미 올라옴 (warm)', t.n, sec(t.medianMs)])).join('')}
+</tbody></table>
+${r.integrity ? `<h2>승인 파일 무결성</h2><p>${bad.length ? `<span class="ng">❌ ${bad.length}개 프로젝트에서 문제 발견</span>: ${esc(bad.map((b) => `${b.project} (${b.problems.join(', ')})`).join('; '))}` : `<span class="ok">✅ 모든 프로젝트(${r.integrity.length}개)의 이미지 해시가 기록과 일치합니다</span>`}</p>` : ''}
+<h2>컷별 결과</h2>
+<table><thead><tr><th>프로젝트</th><th>컷</th><th>시도한 후보</th><th>판정</th></tr></thead><tbody>
+${r.cuts.detail.map((d) => row([esc(d.project), d.cut, d.tried, d.verdict === 'pass' ? '통과' : d.verdict === 'fail' ? '불합격' : '미평가'])).join('')}
+</tbody></table>
+</main></body></html>
+`;
+}

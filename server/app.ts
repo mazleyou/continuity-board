@@ -6,6 +6,7 @@ import { JobRunner } from './jobs.ts';
 import { exportZip, importZip, renderBoard, templateWorkflows } from './export.ts';
 import { currentVersion, needsRefresh, approvedCandidate, type Asset, type Checklist, type Cut, type Job, type Project, type Scene, type ShotSize, type Traits } from './model.ts';
 import { normalizeMask } from './inpaint.ts';
+import { buildReport, renderHtml, renderMarkdown } from './report.ts';
 import { REFRESH_INSTRUCTION } from './prompt.ts';
 import { FRAME } from './workflow.ts';
 import type { Backend } from './backends/types.ts';
@@ -388,6 +389,19 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
     return { raw: await exportZip(store, p), type: 'application/zip', filename: `${safe}.continuity-board.zip` } satisfies Raw;
   });
   route('GET', '/api/projects/:id/verify', async (_r, { id }) => store.verify(id));
+  // Evaluation report across all projects (same numbers as `npm run report`), as a page or Markdown.
+  route('GET', '/api/report', async (req) => {
+    const projects = await Promise.all((await store.list()).filter((x) => !x.corrupt).map((x) => store.load(x.id)));
+    const report = buildReport(projects);
+    report.integrity = await Promise.all(projects.map(async (p) => {
+      const v = await store.verify(p.id);
+      return { project: p.title, ok: v.ok, problems: v.problems };
+    }));
+    const md = new URL(req.url ?? '/', 'http://x').searchParams.get('format') === 'md';
+    return md
+      ? { raw: Buffer.from(renderMarkdown(report)), type: 'text/markdown; charset=utf-8', filename: 'evaluation-report.md' } satisfies Raw
+      : { raw: Buffer.from(renderHtml(report)), type: 'text/html; charset=utf-8' } satisfies Raw;
+  });
   route('POST', '/api/projects/:id/gc', async (_r, { id }) => store.gc(id));
   route('GET', '/api/projects/:id/cuts/:cutId/candidates/:cid/graph.json', async (_r, { id, cutId, cid }) => {
     const p = await store.load(id);

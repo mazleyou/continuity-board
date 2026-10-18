@@ -37,6 +37,7 @@
 
 ```bash
 npm run report            # data/ 아래 모든 프로젝트 → data/evaluation-report.md, .json
+# 또는 앱 상단의 “평가 보고서”: 같은 내용을 브라우저에서 보고 Markdown으로 받을 수 있습니다
 ```
 
 보고서는 다음 판정 규칙을 적용합니다.
