@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdir, readFile, readdir, rename, stat, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -39,6 +40,8 @@ export async function normalizeUpload(bytes: Buffer): Promise<Buffer> {
 /** File-backed project store. All writes for one project are serialized and written atomically (tmp + rename). */
 export class Store {
   readonly root: string;
+  /** Emits ('change', projectId, project) after every successful write. */
+  readonly events = new EventEmitter().setMaxListeners(0);
   private locks = new Map<string, Promise<unknown>>();
 
   constructor(root: string) {
@@ -114,6 +117,7 @@ export class Store {
       const result = await mutate(p);
       p.updatedAt = now();
       await this.write(p);
+      this.events.emit('change', id, p);
       return result;
     });
     this.locks.set(id, run);

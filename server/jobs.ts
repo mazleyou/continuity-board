@@ -1,6 +1,7 @@
 import { FRAME, MODELS, PRESET_NAME, STEPS, WORKFLOW_VERSION } from './workflow.ts';
 import { REFERENCE_MEGAPIXELS, editPrompt, editRefs, generationPrompt, generationRefs } from './prompt.ts';
 import { compositeMasked } from './inpaint.ts';
+import { EventEmitter } from 'node:events';
 import { NotFoundError, newId, now, type Store } from './store.ts';
 import type { Candidate, Job, Project } from './model.ts';
 import { BackendUnavailableError, CancelledError, type Backend, type Progress } from './backends/types.ts';
@@ -24,6 +25,8 @@ export class JobRunner {
   private busy = false;
   private running: { projectId: string; jobId: string; backendJobId?: string; cancel?: boolean } | null = null;
   private readonly progress = new Map<string, Progress>();
+  /** Emits ('progress', projectId) when a running job reports progress, ('wait') when the backend wait changes. */
+  readonly events = new EventEmitter().setMaxListeners(0);
   private readonly store: Store;
   private readonly backend: Backend;
   private readonly retryBaseMs: number;
@@ -114,6 +117,7 @@ export class JobRunner {
     let delay = this.retryBaseMs;
     while (this.wait && this.queue.length) {
       this.wait.nextCheckAt = new Date(Date.now() + delay).toISOString();
+      this.events.emit('wait');
       await new Promise<void>((r) => {
         const t = setTimeout(r, delay);
         this.wakeUp = () => { clearTimeout(t); r(); };
@@ -125,6 +129,7 @@ export class JobRunner {
       delay = Math.min(delay * 2, this.retryMaxMs);
     }
     this.wait = null;
+    this.events.emit('wait');
   }
 
   private async process(projectId: string, jobId: string) {
@@ -167,6 +172,7 @@ export class JobRunner {
         this.queue.unshift({ projectId, jobId });
         this.wait ??= { since: now(), message: e.message, nextCheckAt: now() };
         this.wait.message = e.message;
+        this.events.emit('wait');
         return;
       }
       await this.store.update(projectId, (p) => {
@@ -215,7 +221,10 @@ export class JobRunner {
           if (j) j.backendJobId = backendJobId;
         });
       },
-      onProgress: (pr) => this.progress.set(job.id, pr),
+      onProgress: (pr) => {
+        this.progress.set(job.id, pr);
+        this.events.emit('progress', p.id);
+      },
     });
     const bytes = maskBytes && source
       ? await compositeMasked(references[0].bytes, result.image, maskBytes)

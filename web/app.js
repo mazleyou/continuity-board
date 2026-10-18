@@ -18,6 +18,7 @@ const state = {
   compareMode: 'side',
   reviewDraft: {},
   pollTimer: null,
+  events: null,
   mask: { on: false, dirty: false, canvas: null },
 };
 
@@ -82,10 +83,41 @@ const remember = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
 function setProject(p) {
+  const prev = state.project;
   state.project = p;
+  if (prev && prev.id === p.id) notifyTransitions(prev, p);
   renderAll();
   schedulePoll();
 }
+
+/** Toasts for jobs that just failed, or for the queue becoming empty. */
+function notifyTransitions(prev, next) {
+  const was = new Map(prev.jobs.map((j) => [j.id, j.status]));
+  const failed = next.jobs.find((j) => j.status === 'failed' && was.get(j.id) !== 'failed' && was.has(j.id));
+  const active = (p) => p.jobs.some((j) => j.status === 'queued' || j.status === 'running');
+  if (failed) toast(`작업 실패: ${failed.error}`, 'error');
+  else if (active(prev) && !active(next)) toast('모든 작업이 끝났습니다', 'ok');
+}
+
+/** Live updates over server-sent events; polling is only the fallback while the stream is down. */
+function subscribe(id) {
+  state.events?.close();
+  const es = new EventSource(`/api/projects/${id}/events`);
+  state.events = es;
+  es.addEventListener('project', (e) => {
+    const p = JSON.parse(e.data);
+    if (p.id === P()?.id) setProject(p);
+  });
+  es.addEventListener('live', (e) => {
+    if (!P() || P().id !== id) return;
+    Object.assign(state.project, JSON.parse(e.data));
+    renderAll();
+  });
+  es.addEventListener('open', () => clearTimeout(state.pollTimer));
+  es.addEventListener('error', () => schedulePoll());
+}
+
+const streaming = () => state.events?.readyState === EventSource.OPEN;
 
 // ---------- projects ----------
 
@@ -109,7 +141,9 @@ async function openProject(id) {
   remember('cb.project', id);
   state.cutEls.clear();
   $('#cuts').replaceChildren();
+  state.project = null;
   setProject(await api('GET', `/api/projects/${id}`));
+  subscribe(id);
 }
 
 // ---------- rendering ----------
@@ -492,7 +526,7 @@ function renderMeta(cut) {
     h('details', {}, h('summary', {}, '프롬프트'), h('p', { class: 'prompt mono small' }, g.prompt)),
     h('div', { class: 'row small' },
       h('a', { href: assetUrl(c.image), download: `cut${cut.index + 1}-${c.id}.${c.image.ext}` }, '이미지 받기'),
-      g.graph ? h('a', { href: `/api/projects/${P().id}/cuts/${cut.id}/candidates/${c.id}/graph.json` }, 'ComfyUI 워크플로(API)') : null,
+      g.hasGraph ? h('a', { href: `/api/projects/${P().id}/cuts/${cut.id}/candidates/${c.id}/graph.json` }, 'ComfyUI 워크플로(API)') : null,
       h('button', { class: 'linkish', onclick: () => { $('#edit-seed').value = g.seed; } }, '이 시드 쓰기')));
 }
 
@@ -548,20 +582,16 @@ function renderCutRefs(cut) {
 
 function schedulePoll() {
   clearTimeout(state.pollTimer);
-  if (!P() || !activeJobs().length) return;
+  if (!P() || streaming()) return;
+  // Without the event stream: poll quickly while jobs run, slowly otherwise (picks up other tabs' work).
   state.pollTimer = setTimeout(async () => {
     try {
-      const before = activeJobs().length;
       const p = await api('GET', `/api/projects/${P().id}`);
-      if (p.id !== P()?.id) return;
-      setProject(p);
-      const failedNow = p.jobs.filter((j) => j.status === 'failed' && j.finishedAt && Date.now() - Date.parse(j.finishedAt) < 2500);
-      if (failedNow.length) toast(`작업 실패: ${failedNow[0].error}`, 'error');
-      else if (before && !activeJobs().length) toast('모든 작업이 끝났습니다', 'ok');
+      if (p.id === P()?.id) setProject(p);
     } catch {
       schedulePoll();
     }
-  }, 1200);
+  }, activeJobs().length ? 1200 : 8000);
 }
 
 async function refreshHealth() {

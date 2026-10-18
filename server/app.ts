@@ -25,6 +25,7 @@ class BadRequest extends BadRequestError {}
 type Params = Record<string, string>;
 type Handler = (req: IncomingMessage, params: Params, body: (limit?: number) => Promise<Buffer>) => Promise<unknown>;
 interface Raw { raw: Buffer | Uint8Array; type: string; filename?: string; cache?: boolean }
+interface Stream { stream: (req: IncomingMessage, res: ServerResponse) => void }
 
 export interface AppOptions {
   /** Extra host names (besides localhost) the app may be reached by, e.g. a LAN name. */
@@ -79,11 +80,49 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   route('GET', '/api/projects', async () => store.list());
   route('POST', '/api/projects', async (_r, _p, body) => store.create(str((await json(body)).title, 120)));
   route('POST', '/api/projects/import', async (_r, _p, body) => importZip(store, new Uint8Array(await body(MAX_IMPORT))));
-  route('GET', '/api/projects/:id', async (_r, { id }) => {
-    const p = await store.load(id);
-    const live = Object.fromEntries(p.jobs.filter((j) => j.status === 'running')
-      .map((j) => [j.id, runner.progressOf(j.id)]).filter(([, v]) => v));
-    return { ...p, live, backendWait: runner.backendWait };
+  /** What the UI needs: graphs (two thirds of the bytes) are replaced by a flag; download them per candidate. */
+  const forClient = (p: Project) => ({
+    ...p,
+    cuts: p.cuts.map((c) => ({
+      ...c,
+      candidates: c.candidates.map((k) => ({ ...k, generation: { ...k.generation, graph: null, hasGraph: !!k.generation.graph } })),
+    })),
+    live: liveOf(p),
+    backendWait: runner.backendWait,
+  });
+  const liveOf = (p: Project) => Object.fromEntries(p.jobs.filter((j) => j.status === 'running')
+    .map((j) => [j.id, runner.progressOf(j.id)]).filter(([, v]) => v));
+
+  route('GET', '/api/projects/:id', async (_r, { id }) => store.load(id)); // slimmed by forClient() on the way out
+
+  // Server-sent events: the full (slim) project whenever it changes, live progress at most every 250ms.
+  route('GET', '/api/projects/:id/events', async (_r, { id }) => {
+    let p = await store.load(id);
+    return {
+      stream: (req, res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' });
+        const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        send('project', forClient(p));
+        let timer: NodeJS.Timeout | null = null;
+        const sendLive = () => {
+          if (timer) return;
+          timer = setTimeout(() => { timer = null; send('live', { live: liveOf(p), backendWait: runner.backendWait }); }, 250);
+        };
+        const onChange = (changedId: string, next: Project) => { if (changedId === id) { p = next; send('project', forClient(p)); } };
+        const onProgress = (projectId: string) => { if (projectId === id) sendLive(); };
+        const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 25_000);
+        store.events.on('change', onChange);
+        runner.events.on('progress', onProgress);
+        runner.events.on('wait', sendLive);
+        req.on('close', () => {
+          clearInterval(heartbeat);
+          if (timer) clearTimeout(timer);
+          store.events.off('change', onChange);
+          runner.events.off('progress', onProgress);
+          runner.events.off('wait', sendLive);
+        });
+      },
+    } satisfies Stream;
   });
   route('PATCH', '/api/projects/:id', async (_r, { id }, body) => {
     const b = await json(body);
@@ -327,14 +366,17 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
           const params: Params = {};
           r.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
           const out = await r.handler(req, params, (limit = MAX_BODY) => readBody(req, limit));
-          if (out && typeof out === 'object' && 'raw' in out) {
+          if (out && typeof out === 'object' && 'stream' in out) {
+            (out as Stream).stream(req, res);
+          } else if (out && typeof out === 'object' && 'raw' in out) {
             const o = out as Raw;
             const headers: Record<string, string> = { 'content-type': o.type };
             if (o.filename) headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(o.filename)}`;
             headers['cache-control'] = o.cache ? 'public, max-age=31536000, immutable' : 'no-store';
             res.writeHead(200, headers).end(o.raw);
           } else {
-            res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(out));
+            const body = isProject(out) ? forClient(out) : out;
+            res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(body));
           }
           return;
         }
@@ -352,6 +394,9 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
 }
 
 class Forbidden extends Error {}
+
+const isProject = (v: unknown): v is Project =>
+  !!v && typeof v === 'object' && 'schemaVersion' in v && 'cuts' in v && 'jobs' in v;
 
 const hostOf = (value: string) => value.toLowerCase().replace(/:\d+$/, '');
 

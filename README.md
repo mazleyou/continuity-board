@@ -174,12 +174,12 @@ test/               흐름·보안·기능 테스트, 가짜 ComfyUI 서버로 �
 docs/               평가 가이드, 2분 데모 대본
 ```
 
-ComfyUI와의 연결에는 ComfyUI 자체 API(`/upload/image`, `/prompt`, `/ws`, `/history`, `/view`, `/api/jobs/{id}`, `/api/jobs/{id}/cancel`)를 씁니다. 작업 ID는 앱이 먼저 만들어 저장한 뒤 제출합니다. 그래서 앱이 재시작돼도 ComfyUI가 만들던 결과를 버리지 않고 이어받습니다. 웹소켓이 끊기면 `/history` 폴링으로 결과를 받습니다. 기획 단계에서 검토한 Comfy TypeScript SDK는 베타이고 로컬 실행에 API v2 프록시가 별도로 필요해, MVP에서는 의존성 없는 네이티브 API를 택했습니다. 실행 백엔드가 `Backend` 인터페이스 하나로 분리되어 있으므로, 나중에 SDK나 Comfy Cloud 백엔드를 추가할 수 있습니다.
+ComfyUI와의 연결에는 ComfyUI 자체 API(`/upload/image`, `/prompt`, `/ws`, `/history`, `/view`, `/api/jobs/{id}`, `/api/jobs/{id}/cancel`)를 씁니다. 화면은 서버가 보내는 이벤트 스트림(`/api/projects/{id}/events`)으로 갱신됩니다. 프로젝트가 바뀔 때만 보내고 진행률은 250ms마다 묶어 보내므로, 다른 탭에서 시작한 작업도 바로 보입니다. 화면용 응답에는 ComfyUI 그래프를 빼서 크기가 1/3로 줄었습니다(후보 24개 기준 129KB → 43KB). 그래프는 후보마다 따로 받습니다. 작업 ID는 앱이 먼저 만들어 저장한 뒤 제출합니다. 그래서 앱이 재시작돼도 ComfyUI가 만들던 결과를 버리지 않고 이어받습니다. 웹소켓이 끊기면 `/history` 폴링으로 결과를 받습니다. 기획 단계에서 검토한 Comfy TypeScript SDK는 베타이고 로컬 실행에 API v2 프록시가 별도로 필요해, MVP에서는 의존성 없는 네이티브 API를 택했습니다. 실행 백엔드가 `Backend` 인터페이스 하나로 분리되어 있으므로, 나중에 SDK나 Comfy Cloud 백엔드를 추가할 수 있습니다.
 
 ## 테스트
 
 ```bash
-npm test               # 29개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
+npm test               # 31개: mock 백엔드 흐름, 보안, 기능, 가짜 ComfyUI 서버로 하는 백엔드 테스트
 npm run typecheck
 npm run smoke:comfy    # 실제 ComfyUI: 기준 이미지 → 6컷 → 수정 → 영역 수정 → 무결성 → 내보내기
 ```
