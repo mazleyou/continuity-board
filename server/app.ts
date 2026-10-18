@@ -194,6 +194,18 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
       return p;
     });
   });
+  // Moves a cut to another position. Its scene, candidates, approvals and jobs belong to the cut, so they move with it.
+  route('POST', '/api/projects/:id/cuts/:cutId/move', async (_r, { id, cutId }, body) => {
+    const to = Number((await json(body)).to);
+    return store.update(id, (p) => {
+      const cut = findCut(p, cutId);
+      if (!Number.isInteger(to) || to < 0 || to >= p.cuts.length) throw new BadRequest(`옮길 위치가 올바르지 않습니다: ${to}`);
+      p.cuts.splice(cut.index, 1);
+      p.cuts.splice(to, 0, cut);
+      p.cuts.forEach((c, i) => { c.index = i; });
+      return p;
+    });
+  });
   route('PUT', '/api/projects/:id/cuts/:cutId/ref/:slot', async (_r, { id, cutId, slot }, body) => {
     if (slot !== 'background' && slot !== 'prop') throw new NotFoundError('알 수 없는 참조 슬롯');
     const asset = await store.putAsset(id, await normalizeUpload(await body()));

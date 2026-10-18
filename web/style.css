@@ -390,3 +390,6 @@ details.box summary { cursor: pointer; margin: 0; }
 .compare.zooming [data-zoomable] { cursor: zoom-in; }
 #zoom-toggle[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 .compare-toolbar { gap: 10px; }
+
+.btn.icon { padding: 4px 7px; font-size: 11px; }
+.cut { animation-fill-mode: backwards; }

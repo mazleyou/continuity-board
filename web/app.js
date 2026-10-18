@@ -260,6 +260,8 @@ function buildCutCard(cut) {
     h('div', { class: 'cut-foot' },
       h('div', { class: 'jobs' }),
       h('div', { class: 'cut-actions' },
+        h('button', { class: 'btn ghost sm icon', dataset: { act: 'left' }, 'aria-label': '앞으로 옮기기', title: '앞으로 옮기기' }, '◀'),
+        h('button', { class: 'btn ghost sm icon', dataset: { act: 'right' }, 'aria-label': '뒤로 옮기기', title: '뒤로 옮기기' }, '▶'),
         h('button', { class: 'btn ghost sm', dataset: { act: 'gen' } }, '생성'),
         h('button', { class: 'btn ink sm', dataset: { act: 'open' } }, '검토·수정'))));
   $('.frame', el).addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDialog(cut.id); } });
@@ -268,6 +270,13 @@ function buildCutCard(cut) {
     toast(`컷 ${cut.index + 1} 생성 작업을 대기열에 넣었습니다`);
   }));
   $('[data-act="open"]', el).addEventListener('click', () => openDialog(cut.id));
+  for (const [act, delta] of [['left', -1], ['right', 1]]) {
+    $(`[data-act="${act}"]`, el).addEventListener('click', () => guard(async () => {
+      const current = P().cuts.find((c) => c.id === cut.id);
+      setProject(await api('POST', `/api/projects/${P().id}/cuts/${cut.id}/move`, { to: current.index + delta }));
+      $(`[data-act="${act}"]`, state.cutEls.get(cut.id))?.focus();
+    }));
+  }
   return el;
 }
 
@@ -282,9 +291,16 @@ function renderCuts() {
     }
     updateCutCard(el, cut);
   }
+  // Keep the DOM in board order (cuts can be reordered); append() moves existing nodes.
+  const ordered = P().cuts.map((c) => state.cutEls.get(c.id));
+  if (ordered.some((el, i) => container.children[i] !== el)) container.append(...ordered);
 }
 
 function updateCutCard(el, cut) {
+  $('.cutno', el).textContent = `CUT ${pad2(cut.index + 1)}`;
+  $('.frame', el).setAttribute('aria-label', `컷 ${cut.index + 1} 검토 열기`);
+  $('[data-act="left"]', el).disabled = cut.index === 0;
+  $('[data-act="right"]', el).disabled = cut.index === P().cuts.length - 1;
   const f = $('.scene', el).elements;
   for (const k of ['location', 'action', 'expression', 'shot', 'lighting']) if (document.activeElement !== f[k]) f[k].value = cut.scene[k] ?? '';
 

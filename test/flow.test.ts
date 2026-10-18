@@ -214,3 +214,37 @@ test('기준 되돌리기: 이전 기준을 불러와 다시 승인하면, 그 �
     await app.close();
   }
 });
+
+test('컷 순서 바꾸기: 장면·후보·승인·작업이 컷과 함께 옮겨지고, 보드와 내보내기가 새 순서를 따른다', async () => {
+  const app = await startApp(undefined, 200);
+  try {
+    let p = await seedProject(app);
+    await app.call('POST', `/api/projects/${p.id}/cuts/${p.cuts[1].id}/generate`, {});
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    const moving = p.cuts[1];
+    p = await app.call('POST', `/api/projects/${p.id}/cuts/${moving.id}/approve`, { candidateId: moving.candidates[0].id });
+    // A job queued for the cut keeps working after the move.
+    await app.call('POST', `/api/projects/${p.id}/cuts/${moving.id}/generate`, {});
+    p = await app.call('POST', `/api/projects/${p.id}/cuts/${moving.id}/move`, { to: 4 });
+    assert.deepEqual(p.cuts.map((c) => c.index), [0, 1, 2, 3, 4, 5]);
+    assert.equal(p.cuts[4].id, moving.id);
+    assert.equal(p.cuts[4].scene.location, '사무실 복도');
+    assert.equal(p.cuts[4].approvedCandidateId, moving.candidates[0].id);
+    assert.equal(p.cuts[1].scene.location, '카페 창가', 'the others shift up');
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    assert.equal(p.cuts[4].candidates.length, 2);
+
+    const { unzipSync } = await import('fflate');
+    const zip = unzipSync(new Uint8Array(await app.bytes(`/api/projects/${p.id}/export.zip`)));
+    const manifest = JSON.parse(new TextDecoder().decode(zip['manifest.json']));
+    assert.equal(manifest.cuts[4].approved.sha256, p.cuts[4].candidates[0].image.sha256);
+    assert.ok(zip['cuts/cut-05.png']);
+    // Reordered projects still pass import validation.
+    await app.call('POST', '/api/projects/import', undefined, await app.bytes(`/api/projects/${p.id}/export.zip`));
+    await assert.rejects(app.call('POST', `/api/projects/${p.id}/cuts/${moving.id}/move`, { to: 6 }), /400/);
+  } finally {
+    await app.close();
+  }
+});
