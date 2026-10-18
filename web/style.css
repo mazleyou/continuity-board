@@ -597,3 +597,5 @@ body { background: radial-gradient(1200px 700px at 10% -10%, #fbe7f1 0%, transpa
 @media (max-width: 700px) {
   .topbar { margin: 8px 8px 0; }
 }
+
+.mini-ref { position: absolute; right: 4px; bottom: 4px; font: 700 12px var(--sans); background: var(--primary); color: #fff; padding: 0 6px; border-radius: 999px; }

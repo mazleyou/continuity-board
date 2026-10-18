@@ -428,6 +428,7 @@ function openDialog(cutId) {
   $('#edit-instruction').value = '';
   $('#edit-seed').value = '';
   state.seen.candidates.clear();
+  state.compareRefId = null;
   setMaskMode(false);
   loadReviewDraft();
   const dlg = $('#cut-dialog');
@@ -465,23 +466,40 @@ function figure(c, label, cut) {
     h('figcaption', {}, h('b', {}, label), ` #${n} · ${c.kind === 'edit' ? '수정' : '생성'} · v${versionOf(c.characterVersionId)?.number ?? '?'}`));
 }
 
+/**
+ * What the selected candidate is compared against: a pinned candidate, else the approved one, else (nothing approved
+ * yet) another candidate - so candidates can be compared before the first approval.
+ */
+function compareReference(cut, sel) {
+  const pinned = cut.candidates.find((c) => c.id === state.compareRefId);
+  if (pinned && pinned !== sel) return { cand: pinned, label: '비교 기준' };
+  const approved = approvedOf(cut);
+  if (approved && approved !== sel) return { cand: approved, label: '승인본' };
+  if (approved) return null;
+  const other = [...cut.candidates].reverse().find((c) => c !== sel);
+  return other ? { cand: other, label: '다른 후보' } : null;
+}
+
 function renderCompare(cut) {
   const box = $('#compare');
-  const approved = approvedOf(cut);
   const sel = selectedCandidate(cut);
+  const ref = sel ? compareReference(cut, sel) : null;
+  const approved = ref?.cand;
   let mode = state.mask.on ? 'single' : state.compareMode;
-  if ((mode === 'side' || mode === 'swipe') && (!approved || !sel || approved === sel)) mode = 'single';
+  if ((mode === 'side' || mode === 'swipe') && !ref) mode = 'single';
   $$('.compare-toolbar .seg button').forEach((b) => {
     b.classList.toggle('on', b.dataset.mode === state.compareMode);
     b.setAttribute('aria-pressed', String(b.dataset.mode === state.compareMode));
   });
   box.className = `compare ${mode}`;
-  const key = `${mode}|${approved?.id}|${sel?.id}|${state.mask.on}`;
+  const key = `${mode}|${approved?.id}|${ref?.label}|${sel?.id}|${state.mask.on}`;
   if (box.dataset.key === key) return;
   box.dataset.key = key;
-  $('#cmp-caption').textContent = mode === 'single' && state.compareMode !== 'single' && sel && approved === sel ? '선택한 후보가 승인본입니다' : '';
+  $('#cmp-caption').textContent = mode === 'single' && state.compareMode !== 'single' && !state.mask.on
+    ? (cut.candidates.length < 2 ? '비교할 다른 후보가 없습니다' : '선택한 후보가 승인본입니다 · 다른 후보를 “비교 기준”으로 고정하세요')
+    : '';
   if (mode === 'side') {
-    box.replaceChildren(figure(approved, '승인본', cut), figure(sel, '선택 후보', cut));
+    box.replaceChildren(figure(approved, ref.label, cut), figure(sel, '선택 후보', cut));
     $$('.fig', box).forEach((f) => { f.dataset.zoomable = ''; });
   } else if (mode === 'swipe') {
     const top = h('img', { src: assetUrl(sel.image), alt: '선택 후보', class: 'top' });
@@ -490,11 +508,11 @@ function renderCompare(cut) {
     const apply = () => { top.style.clipPath = `inset(0 0 0 ${range.value}%)`; line.style.left = `${range.value}%`; };
     range.addEventListener('input', apply);
     box.replaceChildren(h('div', { class: 'swipe' },
-      h('img', { src: assetUrl(approved.image), alt: '승인본' }), top, line,
-      h('span', { class: 'sw-l' }, '승인본'), h('span', { class: 'sw-r' }, '선택 후보')), range);
+      h('img', { src: assetUrl(approved.image), alt: ref.label }), top, line,
+      h('span', { class: 'sw-l' }, ref.label), h('span', { class: 'sw-r' }, '선택 후보')), range);
     apply();
   } else {
-    const fig = figure(sel, approved === sel ? '승인본' : '선택 후보', cut);
+    const fig = figure(sel, sel && sel.id === cut.approvedCandidateId ? '승인본' : '선택 후보', cut);
     fig.dataset.zoomable = '';
     if (state.mask.on && sel) {
       const img = $('img', fig);
@@ -636,6 +654,8 @@ function maskDataUrl() {
 }
 
 function renderStrip(cut) {
+  // Re-rendering replaces the buttons; keep keyboard focus on the same candidate instead of losing it to <body>.
+  const focusedCand = document.activeElement?.closest?.('#strip [data-cand]')?.dataset.cand;
   const jobs = cutJobs(cut).filter((j) => j.status !== 'done');
   let newcomers = 0;
   const entering = (id) => {
@@ -647,6 +667,7 @@ function renderStrip(cut) {
     const parentIdx = c.parentId ? cut.candidates.findIndex((x) => x.id === c.parentId) + 1 : 0;
     const n = entering(c.id);
     return h('button', {
+      dataset: { cand: c.id },
       class: `cand ${c.id === state.selectedCandidateId ? 'sel' : ''} ${c.id === cut.approvedCandidateId ? 'appr' : ''} ${n !== null ? 'enter' : ''}`,
       style: n !== null ? `--stagger:${n}` : null,
       onclick: () => { state.selectedCandidateId = c.id; clearMask(); loadReviewDraft(); renderDialog(); },
@@ -655,6 +676,7 @@ function renderStrip(cut) {
     h('img', { src: assetUrl(c.image), alt: '', loading: 'lazy' }),
     h('span', { class: 'cand-label mono' }, `#${i + 1}`, c.kind === 'edit' ? ` ✎←#${parentIdx}` : ''),
     c.id === cut.approvedCandidateId ? h('span', { class: 'mini-stamp' }, '승인') : null,
+    c.id === state.compareRefId ? h('span', { class: 'mini-ref' }, '비교 기준') : null,
     !isCurrentBaseline(c.characterVersionId) ? h('span', { class: 'mini-stale' }, `v${versionOf(c.characterVersionId)?.number}`) : null);
   });
   for (const j of jobs) {
@@ -670,6 +692,7 @@ function renderStrip(cut) {
   }
   if (!items.length) items.push(h('div', { class: 'strip-empty small muted' }, '아직 후보가 없습니다. 보드에서 “생성”을 누르세요.'));
   $('#strip').replaceChildren(...items);
+  if (focusedCand) $(`#strip [data-cand="${focusedCand}"]`)?.focus();
 }
 
 function renderMeta(cut) {
@@ -703,7 +726,15 @@ function renderMeta(cut) {
     h('div', { class: 'row small' },
       h('a', { href: assetUrl(c.image), download: `cut${cut.index + 1}-${c.id}.${c.image.ext}` }, '이미지 받기'),
       g.hasGraph ? h('a', { href: `/api/projects/${P().id}/cuts/${cut.id}/candidates/${c.id}/graph.json` }, 'ComfyUI 워크플로(API)') : null,
-      h('button', { class: 'linkish', onclick: () => { $('#edit-seed').value = g.seed; } }, '이 시드 쓰기')));
+      h('button', { class: 'linkish', onclick: () => { $('#edit-seed').value = g.seed; } }, '이 시드 쓰기'),
+      h('button', { class: 'linkish', 'aria-pressed': String(state.compareRefId === c.id), onclick: () => togglePin(c.id) },
+        state.compareRefId === c.id ? '비교 기준 해제' : '비교 기준으로 (P)')));
+}
+
+function togglePin(id) {
+  state.compareRefId = state.compareRefId === id ? null : id;
+  $('#compare').dataset.key = '';
+  renderDialog();
 }
 
 function findExt(sha) {
@@ -937,7 +968,8 @@ function wire() {
   // dialog
   const dlg = $('#cut-dialog');
   // Review shortcuts: ←/→ change cut, 1–9 pick a candidate, A approves it. Ignored while typing or painting.
-  dlg.addEventListener('keydown', (e) => {
+  document.addEventListener('keydown', (e) => {
+    if (!dlg.open) return;
     const t = e.target;
     if (state.mask.on && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !t.matches('input, textarea')) {
       e.preventDefault();
@@ -955,6 +987,8 @@ function wire() {
       clearMask();
       loadReviewDraft();
       renderDialog();
+    } else if ((e.key === 'p' || e.key === 'P') && state.selectedCandidateId) {
+      togglePin(state.selectedCandidateId);
     } else if (e.key === 'z' || e.key === 'Z') {
       setZoom(!state.zoom.on);
     } else if ((e.key === 'a' || e.key === 'A') && !$('#approve-cand').disabled) {
