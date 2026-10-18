@@ -202,3 +202,25 @@ test('미승인 컷 모두 생성: 장면이 빈 컷은 건너뛰고 나머지�
     await app.close();
   }
 });
+
+test('같은 시드로 다시 생성: 지정한 시드가 그대로 쓰이고, 바뀐 장면 설명이 반영된다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    const cut = p.cuts[0];
+    await app.call('POST', `/api/projects/${p.id}/cuts/${cut.id}/generate`, {});
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    const first = p.cuts[0].candidates[0];
+    await app.call('PATCH', `/api/projects/${p.id}/cuts/${cut.id}`, { scene: { ...cut.scene, expression: '놀란' } });
+    await app.call('POST', `/api/projects/${p.id}/cuts/${cut.id}/generate`, { count: 1, seed: first.generation.seed });
+    await app.runner.idle();
+    p = await app.call('GET', `/api/projects/${p.id}`);
+    const again = p.cuts[0].candidates[1];
+    assert.equal(again.generation.seed, first.generation.seed);
+    assert.match(again.generation.prompt, /Facial expression: 놀란/);
+    assert.notEqual(again.image.sha256, first.image.sha256);
+  } finally {
+    await app.close();
+  }
+});

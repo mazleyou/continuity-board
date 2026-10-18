@@ -727,7 +727,15 @@ function renderMeta(cut) {
     h('div', { class: 'row small' },
       h('a', { href: assetUrl(c.image), download: `cut${cut.index + 1}-${c.id}.${c.image.ext}` }, '이미지 받기'),
       g.hasGraph ? h('a', { href: `/api/projects/${P().id}/cuts/${cut.id}/candidates/${c.id}/graph.json` }, 'ComfyUI 워크플로(API)') : null,
-      h('button', { class: 'linkish', onclick: () => { $('#edit-seed').value = g.seed; } }, '이 시드 쓰기'),
+      h('button', { class: 'linkish', onclick: () => { $('#edit-seed').value = g.seed; } }, '이 시드로 수정'),
+      // Same seed + adjusted scene text keeps the composition (measured: ~2.4x closer than a new seed).
+      c.kind === 'generate' ? h('button', {
+        class: 'linkish', title: '장면 설명을 고친 뒤 누르면 구도는 비슷하게 유지됩니다',
+        onclick: () => guard(async () => {
+          setProject(await api('POST', `/api/projects/${P().id}/cuts/${cut.id}/generate`, { count: 1, seed: g.seed }));
+          toast('같은 시드로 다시 생성합니다 · 지금 장면 설명이 반영되고 구도는 비슷하게 유지됩니다');
+        }),
+      }, '이 시드로 다시 생성') : null,
       h('button', { class: 'linkish', 'aria-pressed': String(state.compareRefId === c.id), onclick: () => togglePin(c.id) },
         state.compareRefId === c.id ? '비교 기준 해제' : '비교 기준으로 (P)')));
 }
