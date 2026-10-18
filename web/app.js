@@ -272,6 +272,7 @@ function renderBaseline() {
     ? '저장되지 않은 기준 변경이 있습니다. 승인하기 전까지 새 컷은 현재 기준으로 생성됩니다.' : '';
 
   let newVersions = 0;
+  $('#spawn-project').hidden = !v;
   $('#version-list').replaceChildren(...[...p.versions].reverse().map((ver) => {
     const isNew = !state.seen.versions.has(ver.id);
     state.seen.versions.add(ver.id);
@@ -872,6 +873,11 @@ function wire() {
     await loadProjectList(p.id);
     $('#project-title').focus();
     $('#project-title').select();
+  }));
+  $('#spawn-project').addEventListener('click', () => guard(async () => {
+    const created = await api('POST', `/api/projects/${P().id}/spawn`, {});
+    await loadProjectList(created.id);
+    toast(`“${created.title}”을(를) 만들었습니다 · 캐릭터 기준 v1이 이미 승인되어 있습니다`, 'ok');
   }));
   $('#delete-project').addEventListener('click', () => guard(async () => {
     const p = P();

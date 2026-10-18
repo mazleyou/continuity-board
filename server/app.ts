@@ -79,6 +79,20 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   // ---- projects ----
   route('GET', '/api/projects', async () => store.list());
   route('POST', '/api/projects', async (_r, _p, body) => store.create(str((await json(body)).title, 120)));
+  // A new storyboard with the same character: the current baseline (photos, traits) and style, approved as v1.
+  route('POST', '/api/projects/:id/spawn', async (_r, { id }, body) => {
+    const src = await store.load(id);
+    const v = currentVersion(src);
+    if (!v) throw new BadRequest('먼저 캐릭터 기준을 승인하세요');
+    const created = await store.create(str((await json(body)).title, 120) || `${v.traits.name || '캐릭터'} 새 콘티`);
+    for (const a of [v.faceRef, v.bodyRef]) await store.putAsset(created.id, await store.readAsset(id, a));
+    return store.update(created.id, (p) => {
+      p.style = src.style;
+      p.versions = [{ ...structuredClone(v), id: newId(), number: 1, createdAt: now() }];
+      p.draft = { traits: structuredClone(v.traits), faceRef: v.faceRef, bodyRef: v.bodyRef };
+      return p;
+    });
+  });
   route('POST', '/api/projects/import', async (_r, _p, body) => importZip(store, new Uint8Array(await body(MAX_IMPORT))));
   /** What the UI needs: graphs (two thirds of the bytes) are replaced by a flag; download them per candidate. */
   const forClient = (p: Project) => ({

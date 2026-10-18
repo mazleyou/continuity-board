@@ -248,3 +248,28 @@ test('컷 순서 바꾸기: 장면·후보·승인·작업이 컷과 함께 옮�
     await app.close();
   }
 });
+
+test('같은 캐릭터로 새 콘티: 기준(사진·특징·스타일)이 v1로 승인된 새 프로젝트를 만든다', async () => {
+  const app = await startApp();
+  try {
+    let p = await seedProject(app);
+    p = await app.call('PATCH', `/api/projects/${p.id}`, { style: 'watercolor picture book' });
+    const v = p.versions[0];
+    const q = await app.call('POST', `/api/projects/${p.id}/spawn`, { title: '두 번째 콘티' });
+    assert.notEqual(q.id, p.id);
+    assert.equal(q.title, '두 번째 콘티');
+    assert.equal(q.style, 'watercolor picture book');
+    assert.equal(q.versions.length, 1);
+    assert.deepEqual([q.versions[0].number, q.versions[0].faceRef.sha256, q.versions[0].traits], [1, v.faceRef.sha256, v.traits]);
+    assert.ok(q.cuts.every((c) => !c.scene.location && !c.candidates.length), 'scenes start empty');
+    // The copy is self-contained: it can generate and verifies on its own.
+    await app.call('PATCH', `/api/projects/${q.id}/cuts/${q.cuts[0].id}`, { scene: { location: 'a', action: 'b', expression: '', shot: 'wide' } });
+    await app.call('POST', `/api/projects/${q.id}/cuts/${q.cuts[0].id}/generate`, {});
+    await app.runner.idle();
+    assert.ok((await app.call<{ ok: boolean }>('GET', `/api/projects/${q.id}/verify`)).ok);
+    const empty = await app.call('POST', '/api/projects', { title: 'x' });
+    await assert.rejects(app.call('POST', `/api/projects/${empty.id}/spawn`, {}), /400 .*캐릭터 기준/);
+  } finally {
+    await app.close();
+  }
+});
