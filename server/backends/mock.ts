@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
-import { CancelledError, type Backend, type Health, type RunRequest, type RunResult } from './types.ts';
+import { BackendUnavailableError, CancelledError, type Backend, type Health, type RunRequest, type RunResult } from './types.ts';
 
 /**
  * Deterministic stand-in for the model, for UI work, tests and demos without a GPU.
@@ -12,12 +12,15 @@ export class MockBackend implements Backend {
   private readonly delayMs: number;
   private readonly cancelled = new Set<string>();
   private warm = false;
+  /** Simulates ComfyUI being down (tests, demos of the waiting banner). */
+  offline = false;
 
   constructor(delayMs = 600) {
     this.delayMs = delayMs;
   }
 
   async health(): Promise<Health> {
+    if (this.offline) return { ok: false, backend: this.name, detail: 'Mock 백엔드: 오프라인으로 설정됨' };
     return { ok: true, backend: this.name, detail: 'Mock 백엔드 — 실제 모델 없이 흐름만 검증합니다' };
   }
 
@@ -28,6 +31,7 @@ export class MockBackend implements Backend {
   async release() {}
 
   async run(req: RunRequest): Promise<RunResult> {
+    if (this.offline) throw new BackendUnavailableError('mock: 오프라인');
     const id = req.resumeId ?? crypto.randomUUID();
     if (!req.resumeId) await req.onSubmit?.(id);
     const steps = 4;

@@ -3,12 +3,21 @@ import { REFERENCE_MEGAPIXELS, editPrompt, editRefs, generationPrompt, generatio
 import { compositeMasked } from './inpaint.ts';
 import { NotFoundError, newId, now, type Store } from './store.ts';
 import type { Candidate, Job, Project } from './model.ts';
-import { CancelledError, type Backend, type Progress } from './backends/types.ts';
+import { BackendUnavailableError, CancelledError, type Backend, type Progress } from './backends/types.ts';
+
+export interface BackendWait {
+  since: string;
+  message: string;
+  /** When the next health check happens. */
+  nextCheckAt: string;
+}
 
 /**
  * One worker for all projects: a single GPU runs one graph at a time.
  * Job state is persisted in project.json. The backend job id is saved before submission, so after an app
  * restart an interrupted job is queued again and adopts the result the backend was still producing.
+ * If the backend cannot be reached, the job goes back to the front of the queue and the worker waits,
+ * re-checking health with backoff, instead of failing every queued job.
  */
 export class JobRunner {
   private queue: { projectId: string; jobId: string }[] = [];
@@ -17,10 +26,26 @@ export class JobRunner {
   private readonly progress = new Map<string, Progress>();
   private readonly store: Store;
   private readonly backend: Backend;
+  private readonly retryBaseMs: number;
+  private readonly retryMaxMs: number;
+  private wait: BackendWait | null = null;
+  private wakeUp: (() => void) | null = null;
 
-  constructor(store: Store, backend: Backend) {
+  constructor(store: Store, backend: Backend, opts: { retryBaseMs?: number; retryMaxMs?: number } = {}) {
     this.store = store;
     this.backend = backend;
+    this.retryBaseMs = opts.retryBaseMs ?? 2000;
+    this.retryMaxMs = opts.retryMaxMs ?? 30_000;
+  }
+
+  /** Set while jobs are waiting for an unreachable backend. */
+  get backendWait(): BackendWait | null {
+    return this.wait;
+  }
+
+  /** Number of jobs waiting in the queue (all projects). */
+  get pending(): number {
+    return this.queue.length;
   }
 
   async recover() {
@@ -37,6 +62,11 @@ export class JobRunner {
   enqueue(projectId: string, jobId: string) {
     this.queue.push({ projectId, jobId });
     this.pump();
+  }
+
+  /** Re-check the backend now instead of waiting for the next backoff tick. */
+  retryNow() {
+    this.wakeUp?.();
   }
 
   /** Live progress of running jobs (kept in memory only; it changes several times per second). */
@@ -63,18 +93,38 @@ export class JobRunner {
 
   private async pump() {
     if (this.busy) return;
-    const next = this.queue.shift();
-    if (!next) return;
+    if (!this.queue.length) return;
     this.busy = true;
     try {
+      if (this.wait) await this.waitForBackend();
+      const next = this.queue.shift();
+      if (!next) return;
       await this.process(next.projectId, next.jobId);
     } catch {
       // process() records failures on the job; a vanished project is simply skipped
     } finally {
       this.busy = false;
-      if (!this.queue.length) await this.backend.release().catch(() => {});
+      if (!this.queue.length && !this.wait) await this.backend.release().catch(() => {});
       this.pump();
     }
+  }
+
+  /** Blocks the worker until the backend answers health checks again (or nothing is left to run). */
+  private async waitForBackend() {
+    let delay = this.retryBaseMs;
+    while (this.wait && this.queue.length) {
+      this.wait.nextCheckAt = new Date(Date.now() + delay).toISOString();
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, delay);
+        this.wakeUp = () => { clearTimeout(t); r(); };
+      });
+      this.wakeUp = null;
+      const health = await this.backend.health().catch((e) => ({ ok: false, detail: (e as Error).message }));
+      if (health.ok) break;
+      this.wait.message = health.detail;
+      delay = Math.min(delay * 2, this.retryMaxMs);
+    }
+    this.wait = null;
   }
 
   private async process(projectId: string, jobId: string) {
@@ -105,6 +155,20 @@ export class JobRunner {
       });
     } catch (e) {
       const cancelled = e instanceof CancelledError || this.running?.cancel;
+      if (!cancelled && e instanceof BackendUnavailableError) {
+        // Not the job's fault: put it back first in line and let the worker wait for the backend.
+        await this.store.update(projectId, (p) => {
+          const j = p.jobs.find((x) => x.id === jobId);
+          if (!j) return;
+          j.status = 'queued';
+          j.attempts -= 1;
+          j.startedAt = undefined;
+        }).catch(() => {});
+        this.queue.unshift({ projectId, jobId });
+        this.wait ??= { since: now(), message: e.message, nextCheckAt: now() };
+        this.wait.message = e.message;
+        return;
+      }
       await this.store.update(projectId, (p) => {
         const j = p.jobs.find((x) => x.id === jobId);
         if (!j) return;

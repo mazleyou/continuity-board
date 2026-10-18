@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { LOADER, MODELS, buildGraph, type ApiGraph } from '../workflow.ts';
-import { CancelledError, type Backend, type Health, type Progress, type RunRequest, type RunResult } from './types.ts';
+import { BackendUnavailableError, CancelledError, type Backend, type Health, type Progress, type RunRequest, type RunResult } from './types.ts';
 
 type ImageRef = { filename: string; subfolder: string; type: string };
 
@@ -43,7 +43,8 @@ export class ComfyBackend implements Backend {
         ? { ok: false, backend: this.name, detail: `ComfyUI ${version}: 모델 파일이 없습니다`, missingModels: missing }
         : { ok: true, backend: this.name, detail: `ComfyUI ${version} @ ${this.url}` };
     } catch (e) {
-      return { ok: false, backend: this.name, detail: `ComfyUI에 연결할 수 없습니다 (${this.url}): ${(e as Error).message}` };
+      const detail = e instanceof BackendUnavailableError ? e.message : `ComfyUI에 연결할 수 없습니다 (${this.url}): ${(e as Error).message}`;
+      return { ok: false, backend: this.name, detail };
     }
   }
 
@@ -93,8 +94,23 @@ export class ComfyBackend implements Backend {
   }
 
   private async isKnown(id: string) {
-    const res = await fetch(`${this.url}/api/jobs/${id}`).catch(() => null);
-    return !!res?.ok;
+    const res = await this.fetch(`/api/jobs/${id}`);
+    return res.ok;
+  }
+
+  /** fetch() against ComfyUI; connection failures and gateway errors become BackendUnavailableError. */
+  private async fetch(path: string, init?: RequestInit): Promise<Response> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.url}${path}`, init);
+    } catch (e) {
+      const cause = (e as { cause?: { code?: string } }).cause?.code;
+      throw new BackendUnavailableError(`ComfyUI에 연결할 수 없습니다 (${this.url}${cause ? `, ${cause}` : ''})`);
+    }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new BackendUnavailableError(`ComfyUI가 응답하지 않습니다 (HTTP ${res.status})`);
+    }
+    return res;
   }
 
   /** Websocket listener for one prompt: reports progress and settles on success, error or interruption. */
@@ -160,7 +176,7 @@ export class ComfyBackend implements Backend {
           const img = Object.values<{ images?: ImageRef[] }>(entry.outputs ?? {}).flatMap((o) => o.images ?? [])[0];
           if (!img) throw new Error('ComfyUI가 이미지를 반환하지 않았습니다');
           const q = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder, type: img.type });
-          const res = await fetch(`${this.url}/view?${q}`);
+          const res = await this.fetch(`/view?${q}`);
           if (!res.ok) throw new Error(`이미지 다운로드 실패: HTTP ${res.status}`);
           return Buffer.from(await res.arrayBuffer());
         }
@@ -179,14 +195,14 @@ export class ComfyBackend implements Backend {
     const form = new FormData();
     form.append('image', new Blob([new Uint8Array(png)], { type: 'image/png' }), name);
     form.append('overwrite', 'true');
-    const res = await fetch(`${this.url}/upload/image`, { method: 'POST', body: form });
+    const res = await this.fetch('/upload/image', { method: 'POST', body: form });
     if (!res.ok) throw new Error(`이미지 업로드 실패: HTTP ${res.status} ${await res.text()}`);
     const body = await res.json();
     return body.subfolder ? `${body.subfolder}/${body.name}` : body.name;
   }
 
   private async json(path: string, init?: RequestInit) {
-    const res = await fetch(`${this.url}${path}`, {
+    const res = await this.fetch(path, {
       ...init,
       headers: { 'content-type': 'application/json' },
       signal: AbortSignal.timeout(30_000),

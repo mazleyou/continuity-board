@@ -123,6 +123,13 @@ function renderAll() {
   $('#export-link').href = `/api/projects/${p.id}/export.zip`;
   renderBaseline();
   renderCuts();
+  const wait = p.backendWait;
+  $('#backend-wait').hidden = !wait;
+  if (wait) {
+    $('#wait-count').textContent = String(activeJobs().length);
+    const next = Math.max(0, Math.round((Date.parse(wait.nextCheckAt) - Date.now()) / 1000));
+    $('#wait-detail').textContent = `${wait.message} · 다음 확인 ${next}초 후`;
+  }
   const busyCuts = new Set(activeJobs().map((j) => j.cutId));
   // Same rule as the server's needsRefresh(): stale, not busy, and no refresh candidate from the current baseline yet.
   const refreshed = (c) => c.candidates.some((x) => x.parentId === c.approvedCandidateId
@@ -561,7 +568,7 @@ async function refreshHealth() {
   const el = $('#health');
   try {
     const hl = await api('GET', '/api/health');
-    el.textContent = hl.backend === 'mock' ? 'MOCK 모드' : hl.ok ? 'ComfyUI 연결됨' : 'ComfyUI 문제';
+    el.textContent = hl.queue?.backendWait ? 'ComfyUI 기다리는 중' : hl.backend === 'mock' ? 'MOCK 모드' : hl.ok ? 'ComfyUI 연결됨' : 'ComfyUI 문제';
     el.className = `health ${hl.ok ? (hl.backend === 'mock' ? 'mock' : 'ok') : 'bad'}`;
     el.title = hl.detail + (hl.missingModels ? `\n없는 모델: ${hl.missingModels.join(', ')}` : '');
   } catch {
@@ -646,6 +653,10 @@ function wire() {
     const p = await api('POST', `/api/projects/${P().id}/refresh-stale`);
     setProject(p);
     toast('이전 기준 컷을 현재 기준으로 맞추는 수정 후보를 만듭니다. 결과는 새 후보로만 추가됩니다');
+  }));
+  $('#wait-retry').addEventListener('click', () => guard(async () => {
+    await api('POST', '/api/queue/retry-now', {});
+    toast('ComfyUI 연결을 다시 확인합니다');
   }));
   $('#mask-toggle').addEventListener('click', () => setMaskMode(!state.mask.on));
   $('#mask-clear').addEventListener('click', clearMask);

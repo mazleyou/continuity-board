@@ -8,10 +8,11 @@ import { createApp } from '../server/app.ts';
 import { MockBackend } from '../server/backends/mock.ts';
 import type { Project } from '../server/model.ts';
 
-export async function startApp(dataDir?: string, delayMs = 5) {
+export async function startApp(dataDir?: string, delayMs = 5, opts: { retryBaseMs?: number } = {}) {
   const dir = dataDir ?? await mkdtemp(join(tmpdir(), 'cb-test-'));
   const store = new Store(dir);
-  const { server, runner } = createApp(store, new MockBackend(delayMs), resolve(import.meta.dirname, '../web'));
+  const backend = new MockBackend(delayMs);
+  const { server, runner } = createApp(store, backend, resolve(import.meta.dirname, '../web'), { retryBaseMs: opts.retryBaseMs ?? 20, retryMaxMs: 200 });
   await runner.recover();
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -27,7 +28,7 @@ export async function startApp(dataDir?: string, delayMs = 5) {
   };
   const bytes = async (path: string) => Buffer.from(await (await fetch(base + path)).arrayBuffer());
   return {
-    dir, store, runner, base, call, bytes,
+    dir, store, runner, backend, base, call, bytes,
     close: async (keep = false) => {
       await runner.idle();
       await new Promise((r) => server.close(r));

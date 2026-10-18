@@ -29,11 +29,14 @@ interface Raw { raw: Buffer | Uint8Array; type: string; filename?: string; cache
 export interface AppOptions {
   /** Extra host names (besides localhost) the app may be reached by, e.g. a LAN name. */
   allowedHosts?: string[];
+  /** Backoff for re-checking an unreachable backend (tests use small values). */
+  retryBaseMs?: number;
+  retryMaxMs?: number;
 }
 
 export function createApp(store: Store, backend: Backend, webRoot: string, opts: AppOptions = {}) {
   const allowedHosts = new Set(['localhost', '127.0.0.1', '[::1]', ...(opts.allowedHosts ?? [])].map((h) => h.toLowerCase()));
-  const runner = new JobRunner(store, backend);
+  const runner = new JobRunner(store, backend, { retryBaseMs: opts.retryBaseMs, retryMaxMs: opts.retryMaxMs });
   const routes: { method: string; pattern: RegExp; keys: string[]; handler: Handler }[] = [];
   const route = (method: string, path: string, handler: Handler) => {
     const keys: string[] = [];
@@ -61,7 +64,11 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
   });
 
   // ---- system ----
-  route('GET', '/api/health', async () => backend.health());
+  route('GET', '/api/health', async () => ({ ...(await backend.health()), queue: { pending: runner.pending, backendWait: runner.backendWait } }));
+  route('POST', '/api/queue/retry-now', async () => {
+    runner.retryNow();
+    return { ok: true };
+  });
   route('GET', '/api/workflows/:name', async (_r, { name }) => {
     const wf = templateWorkflows()[name];
     if (!wf) throw new NotFoundError('워크플로를 찾을 수 없습니다');
@@ -76,7 +83,7 @@ export function createApp(store: Store, backend: Backend, webRoot: string, opts:
     const p = await store.load(id);
     const live = Object.fromEntries(p.jobs.filter((j) => j.status === 'running')
       .map((j) => [j.id, runner.progressOf(j.id)]).filter(([, v]) => v));
-    return { ...p, live };
+    return { ...p, live, backendWait: runner.backendWait };
   });
   route('PATCH', '/api/projects/:id', async (_r, { id }, body) => {
     const b = await json(body);

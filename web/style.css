@@ -362,3 +362,10 @@ details.box summary { cursor: pointer; margin: 0; }
 .mask-canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .55; cursor: crosshair; touch-action: none; border-radius: 6px; outline: 2px dashed var(--seal); outline-offset: -2px; }
 
 [hidden] { display: none !important; }
+
+.banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-bottom: 14px; padding: 12px 16px; border-radius: 8px;
+  background: var(--warn-soft); border: 1px solid var(--warn); color: #6b4510; font-size: 13px;
+}
+.banner .mono { margin-top: 4px; color: var(--warn); }

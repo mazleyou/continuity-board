@@ -37,6 +37,9 @@ export interface Health {
   missingModels?: string[];
 }
 
+/** The backend cannot be reached (not running, restarting, network). The job should wait, not fail. */
+export class BackendUnavailableError extends Error {}
+
 export class CancelledError extends Error {
   constructor() {
     super('취소되었습니다');
