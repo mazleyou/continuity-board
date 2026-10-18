@@ -40,7 +40,7 @@
 
 ## 빠른 시작
 
-요구 사항은 Node.js 23.6 이상(TypeScript를 빌드 없이 실행)과 [uv](https://docs.astral.sh/uv/)입니다. 모델을 받으려면 디스크 여유 공간이 약 16GB 필요합니다.
+요구 사항은 Node.js 23.6 이상(TypeScript를 빌드 없이 실행)과 [uv](https://docs.astral.sh/uv/)입니다. nvm을 쓰면 `nvm install && nvm use`로 `.nvmrc`에 지정된 24를 씁니다. 버전이 낮으면 `npm ci`와 `npm start`가 바로 멈추고 이유를 알려 줍니다. 모델을 받으려면 디스크 여유 공간이 약 16GB 필요합니다.
 
 ```bash
 npm install

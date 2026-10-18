@@ -8,12 +8,18 @@
     "node": ">=23.6"
   },
   "scripts": {
+    "prestart": "node scripts/check-node.mjs",
     "start": "node server/index.ts",
+    "prestart:mock": "node scripts/check-node.mjs",
     "start:mock": "CB_BACKEND=mock node server/index.ts",
+    "pretest": "node scripts/check-node.mjs",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "preworkflows": "node scripts/check-node.mjs",
     "workflows": "node scripts/export-workflows.ts",
+    "presmoke:comfy": "node scripts/check-node.mjs",
     "smoke:comfy": "node scripts/smoke-comfy.ts",
+    "prereport": "node scripts/check-node.mjs",
     "report": "node scripts/eval-report.ts"
   },
   "dependencies": {
