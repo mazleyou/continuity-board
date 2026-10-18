@@ -8,6 +8,7 @@ const SHOTS = [
   ['medium', '미디엄'], ['close-up', '클로즈업'], ['extreme-close-up', '익스트림 클로즈업'],
 ];
 const CHECKS = ['face', 'hair', 'outfit', 'props', 'scene', 'instruction'];
+const CHECK_LABEL = { face: '얼굴', hair: '헤어', outfit: '의상', props: '소품', scene: '장면 지시', instruction: '수정 지시' };
 const REFRESH_INSTRUCTION = 'redraw the person so the face, hair, outfit and props exactly match the current character baseline in image 2 and image 3';
 
 const state = {
@@ -379,7 +380,10 @@ function renderCompare(cut) {
   const sel = selectedCandidate(cut);
   let mode = state.mask.on ? 'single' : state.compareMode;
   if ((mode === 'side' || mode === 'swipe') && (!approved || !sel || approved === sel)) mode = 'single';
-  $$('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.compareMode));
+  $$('.seg button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.mode === state.compareMode);
+    b.setAttribute('aria-pressed', String(b.dataset.mode === state.compareMode));
+  });
   box.className = `compare ${mode}`;
   const key = `${mode}|${approved?.id}|${sel?.id}|${state.mask.on}`;
   if (box.dataset.key === key) return;
@@ -559,8 +563,8 @@ function renderChecks() {
     const cell = $(`.checks [data-k="${k}"]`);
     const v = state.reviewDraft[k];
     cell.replaceChildren(
-      h('button', { type: 'button', class: `tri pass ${v === true ? 'on' : ''}`, onclick: () => { state.reviewDraft[k] = v === true ? undefined : true; renderChecks(); } }, '통과'),
-      h('button', { type: 'button', class: `tri fail ${v === false ? 'on' : ''}`, onclick: () => { state.reviewDraft[k] = v === false ? undefined : false; renderChecks(); } }, '불합격'));
+      h('button', { type: 'button', class: `tri pass ${v === true ? 'on' : ''}`, 'aria-pressed': String(v === true), 'aria-label': `${CHECK_LABEL[k]} 통과`, onclick: () => { state.reviewDraft[k] = v === true ? undefined : true; renderChecks(); } }, '통과'),
+      h('button', { type: 'button', class: `tri fail ${v === false ? 'on' : ''}`, 'aria-pressed': String(v === false), 'aria-label': `${CHECK_LABEL[k]} 불합격`, onclick: () => { state.reviewDraft[k] = v === false ? undefined : false; renderChecks(); } }, '불합격'));
   }
 }
 
@@ -734,6 +738,25 @@ function wire() {
 
   // dialog
   const dlg = $('#cut-dialog');
+  // Review shortcuts: ←/→ change cut, 1–9 pick a candidate, A approves it. Ignored while typing or painting.
+  dlg.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (e.metaKey || e.ctrlKey || e.altKey || t.matches('input, textarea, select, [contenteditable]')) return;
+    const cut = dialogCut();
+    if (!cut) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      openDialog(P().cuts[(cut.index + (e.key === 'ArrowRight' ? 1 : 5)) % 6].id);
+    } else if (/^[1-9]$/.test(e.key) && cut.candidates[Number(e.key) - 1]) {
+      state.selectedCandidateId = cut.candidates[Number(e.key) - 1].id;
+      clearMask();
+      loadReviewDraft();
+      renderDialog();
+    } else if ((e.key === 'a' || e.key === 'A') && !$('#approve-cand').disabled) {
+      e.preventDefault();
+      $('#approve-cand').click();
+    }
+  });
   $('#dlg-close').addEventListener('click', () => dlg.close());
   dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
   $$('[data-nav]', dlg).forEach((b) => b.addEventListener('click', () => {

@@ -5,13 +5,13 @@
   --card: #fbf8f1;
   --ink: #1d1b17;
   --ink-2: #4a463d;
-  --muted: #857e6f;
+  --muted: #696458;
   --rule: #d8cfbb;
   --slate: #e8b923;
-  --seal: #c8372d;
+  --seal: #b63229;
   --seal-soft: #f6dcd7;
   --ok: #2f7a4f;
-  --warn: #b7791f;
+  --warn: #916018;
   --warn-soft: #fbecc9;
   --bad: #b3261e;
   --r: 6px;
@@ -374,3 +374,6 @@ details.box summary { cursor: pointer; margin: 0; }
 .hb-body { display: grid; gap: 10px; }
 .hb-item ol { margin: 6px 0 0; padding-left: 18px; }
 .hb-item code { font-family: var(--mono); background: rgba(255, 255, 255, .7); padding: 1px 6px; border-radius: 4px; user-select: all; }
+
+.kbd-hint { margin-left: auto; font-size: 11px; color: #bdb5a2; }
+.kbd-hint kbd { font: 600 10px var(--mono); border: 1px solid #4a463d; border-radius: 3px; padding: 0 4px; }
