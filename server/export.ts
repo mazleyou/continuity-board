@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import sharp, { type OverlayOptions } from 'sharp';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { SCHEMA_VERSION, approvedCandidate, currentVersion, isStale, type CharacterVersion, type Cut, type Project } from './model.ts';
 import { BadRequestError, now, referencedShas, sha256, type Store } from './store.ts';
@@ -24,7 +24,7 @@ export async function renderBoard(store: Store, p: Project): Promise<Buffer> {
   const W = pad * 2 + cellW * 3 + gap * 2;
   const H = headH + pad + (cellH + capH) * 2 + gap + pad;
   const v = currentVersion(p);
-  const layers: sharp.OverlayOptions[] = [];
+  const layers: OverlayOptions[] = [];
   let svg = `<text x="${pad}" y="58" font-size="34" font-weight="700" fill="#1b1b1f">${esc(p.title)}</text>`;
   if (v) {
     svg += `<text x="${W - pad}" y="58" font-size="20" text-anchor="end" fill="#55555c">${esc(clip(`${v.traits.name || '캐릭터'} · 기준 v${v.number}`, 60))}</text>`;

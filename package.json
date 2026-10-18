@@ -17,8 +17,8 @@
     "report": "node scripts/eval-report.ts"
   },
   "dependencies": {
-    "fflate": "0.8.2",
-    "sharp": "0.34.4"
+    "fflate": "0.8.3",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/node": "24.7.2",

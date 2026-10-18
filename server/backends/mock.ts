@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import sharp, { type OverlayOptions, type Sharp } from 'sharp';
 import { createHash } from 'node:crypto';
 import { BackendUnavailableError, CancelledError, type Backend, type Health, type RunRequest, type RunResult } from './types.ts';
 
@@ -46,7 +46,7 @@ export class MockBackend implements Backend {
     const hue = h[0] / 255 * 360;
     const { width, height } = req;
 
-    let base: sharp.Sharp;
+    let base: Sharp;
     if (req.kind === 'edit') {
       base = sharp(req.references[0].bytes).resize(width, height, { fit: 'cover' })
         .modulate({ hue: Math.round((h[1] / 255) * 40 - 20), saturation: 1.1 });
@@ -54,7 +54,7 @@ export class MockBackend implements Backend {
       base = sharp({ create: { width, height, channels: 3, background: hsl(hue, 35, 82) } });
     }
 
-    const layers: sharp.OverlayOptions[] = [];
+    const layers: OverlayOptions[] = [];
     const refs = req.kind === 'edit' ? req.references.slice(1) : req.references;
     const thumb = Math.round(height * 0.42);
     let x = Math.round(width * 0.06);

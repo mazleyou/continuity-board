@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // Builds the ComfyUI graphs for both workflows from the official
 // "image_flux2_klein_image_edit_4b_distilled" template, generalized to N reference images:
 // every reference is VAE-encoded and chained through ReferenceLatent on both the positive
@@ -214,8 +215,10 @@ export function toUiWorkflow(api: ApiGraph, title: string) {
   // Topological order keeps the frontend's execution order stable.
   const order = topoOrder(api);
   for (const n of nodes) n.order = order.indexOf(String(n.id));
+  // Deterministic id (derived from the content) so regenerating unchanged workflows produces no diff.
+  const h = createHash('sha256').update(title + JSON.stringify(api)).digest('hex');
   return {
-    id: crypto.randomUUID(),
+    id: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
     revision: 0,
     last_node_id: Math.max(...nodes.map((n) => n.id)),
     last_link_id: links.length,
