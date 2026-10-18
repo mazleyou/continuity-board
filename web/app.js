@@ -23,6 +23,8 @@ const state = {
   health: null,
   mask: { on: false, dirty: false, canvas: null, cursor: null, tool: 'paint', undo: [] },
   zoom: { on: false, scale: 3, fx: 0.5, fy: 0.5 },
+  // Items already shown: only newcomers get the staggered entrance (lists re-render on every live update).
+  seen: { candidates: new Set(), versions: new Set() },
 };
 
 // ---------- helpers ----------
@@ -81,6 +83,35 @@ async function request(method, path, body) {
   if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
   return data;
 }
+
+// ---------- ripple (press feedback) ----------
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const RIPPLE_TARGETS = '.btn, .cand, .tri, .seg button';
+
+function ripple(el, x, y) {
+  if (reducedMotion.matches || el.disabled) return;
+  const r = el.getBoundingClientRect();
+  const size = Math.max(r.width, r.height) * 2;
+  el.classList.add('ripple-host');
+  const dot = document.createElement('span');
+  dot.className = 'ripple';
+  dot.setAttribute('aria-hidden', 'true');
+  Object.assign(dot.style, { width: `${size}px`, height: `${size}px`, left: `${x - r.left - size / 2}px`, top: `${y - r.top - size / 2}px` });
+  el.append(dot);
+  dot.addEventListener('animationend', () => dot.remove());
+}
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest?.(RIPPLE_TARGETS);
+  if (el) ripple(el, e.clientX, e.clientY);
+});
+// Keyboard activation (Enter/Space) has no pointer position: ripple from the centre.
+document.addEventListener('click', (e) => {
+  if (e.detail !== 0) return;
+  const el = e.target.closest?.(RIPPLE_TARGETS);
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  ripple(el, r.left + r.width / 2, r.top + r.height / 2);
+});
 
 let toastTimer;
 function toast(msg, kind = 'info') {
@@ -174,6 +205,7 @@ async function loadProjectList(selectId) {
 async function openProject(id) {
   remember('cb.project', id);
   state.cutEls.clear();
+  state.seen.versions.clear();
   $('#cuts').replaceChildren();
   state.project = null;
   setProject(await api('GET', `/api/projects/${id}`));
@@ -239,10 +271,13 @@ function renderBaseline() {
   $('#baseline-msg').textContent = v && changed
     ? '저장되지 않은 기준 변경이 있습니다. 승인하기 전까지 새 컷은 현재 기준으로 생성됩니다.' : '';
 
+  let newVersions = 0;
   $('#version-list').replaceChildren(...[...p.versions].reverse().map((ver) => {
+    const isNew = !state.seen.versions.has(ver.id);
+    state.seen.versions.add(ver.id);
     const used = p.cuts.filter((c) => approvedOf(c)?.characterVersionId === ver.id).length;
     const restorable = ver !== v && v && fingerprint(ver) !== fingerprint(v);
-    return h('li', { class: ver === v ? 'current' : '' },
+    return h('li', { class: `${ver === v ? 'current' : ''} ${isNew ? 'enter' : ''}`, style: isNew ? `--stagger:${newVersions++}` : null },
       h('div', { class: 'vthumbs' }, h('img', { src: assetUrl(ver.faceRef), alt: '' }), h('img', { src: assetUrl(ver.bodyRef), alt: '' })),
       h('div', {},
         h('div', { class: 'vline' }, h('b', {}, `v${ver.number}`), h('span', { class: 'mono small muted' }, fmtTime(ver.createdAt))),
@@ -392,6 +427,7 @@ function openDialog(cutId) {
   state.selectedCandidateId = (approvedOf(cut) ?? cut.candidates.at(-1))?.id ?? null;
   $('#edit-instruction').value = '';
   $('#edit-seed').value = '';
+  state.seen.candidates.clear();
   setMaskMode(false);
   loadReviewDraft();
   const dlg = $('#cut-dialog');
@@ -601,10 +637,18 @@ function maskDataUrl() {
 
 function renderStrip(cut) {
   const jobs = cutJobs(cut).filter((j) => j.status !== 'done');
+  let newcomers = 0;
+  const entering = (id) => {
+    if (state.seen.candidates.has(id)) return null;
+    state.seen.candidates.add(id);
+    return newcomers++;
+  };
   const items = cut.candidates.map((c, i) => {
     const parentIdx = c.parentId ? cut.candidates.findIndex((x) => x.id === c.parentId) + 1 : 0;
+    const n = entering(c.id);
     return h('button', {
-      class: `cand ${c.id === state.selectedCandidateId ? 'sel' : ''} ${c.id === cut.approvedCandidateId ? 'appr' : ''}`,
+      class: `cand ${c.id === state.selectedCandidateId ? 'sel' : ''} ${c.id === cut.approvedCandidateId ? 'appr' : ''} ${n !== null ? 'enter' : ''}`,
+      style: n !== null ? `--stagger:${n}` : null,
       onclick: () => { state.selectedCandidateId = c.id; clearMask(); loadReviewDraft(); renderDialog(); },
       'aria-pressed': c.id === state.selectedCandidateId,
     },
@@ -618,7 +662,8 @@ function renderStrip(cut) {
     const label = j.status === 'running' ? (live ? `${live.phase} · ${Math.round(live.fraction * 100)}%` : (j.kind === 'edit' ? '수정 시작' : '생성 시작'))
       : j.status === 'queued' ? '대기 중' : j.status === 'cancelled' ? '취소됨' : '실패';
     const active = j.status === 'running' || j.status === 'queued';
-    items.push(h('div', { class: `cand placeholder ${j.status}`, title: j.error ?? '', style: `--p:${live ? live.fraction : 0}` },
+    const n = entering(`job:${j.id}`);
+    items.push(h('div', { class: `cand placeholder ${j.status} ${n !== null ? 'enter' : ''}`, title: j.error ?? '', style: `--p:${live ? live.fraction : 0}${n !== null ? `;--stagger:${n}` : ''}` },
       h('span', {}, label),
       active ? h('button', { class: 'linkish', onclick: () => cancelJobs([j]) }, '취소')
         : h('button', { class: 'linkish', onclick: () => retryJob(j.id) }, '재시도')));
