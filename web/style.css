@@ -383,3 +383,10 @@ details.box summary { cursor: pointer; margin: 0; }
 .mask-cursor { position: absolute; pointer-events: none; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px var(--seal); }
 .mask-cursor.erase { border-style: dashed; }
 .mask-stage { overflow: hidden; }
+
+/* linked zoom */
+.zclip { overflow: hidden; border-radius: 6px; }
+.zclip img { transition: transform .08s linear; }
+.compare.zooming [data-zoomable] { cursor: zoom-in; }
+#zoom-toggle[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.compare-toolbar { gap: 10px; }

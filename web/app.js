@@ -22,6 +22,7 @@ const state = {
   events: null,
   health: null,
   mask: { on: false, dirty: false, canvas: null, cursor: null, tool: 'paint', undo: [] },
+  zoom: { on: false, scale: 3, fx: 0.5, fy: 0.5 },
 };
 
 // ---------- helpers ----------
@@ -383,7 +384,7 @@ function renderDialog() {
 function figure(c, label, cut) {
   if (!c) return h('figure', { class: 'fig empty-fig' }, h('div', { class: 'ph' }, label === '승인본' ? '승인한 컷이 없습니다' : '후보가 없습니다'), h('figcaption', {}, label));
   const n = cut.candidates.indexOf(c) + 1;
-  return h('figure', { class: 'fig' }, h('img', { src: assetUrl(c.image), alt: `${label} #${n}` }),
+  return h('figure', { class: 'fig' }, h('div', { class: 'zclip' }, h('img', { src: assetUrl(c.image), alt: `${label} #${n}` })),
     h('figcaption', {}, h('b', {}, label), ` #${n} · ${c.kind === 'edit' ? '수정' : '생성'} · v${versionOf(c.characterVersionId)?.number ?? '?'}`));
 }
 
@@ -404,6 +405,7 @@ function renderCompare(cut) {
   $('#cmp-caption').textContent = mode === 'single' && state.compareMode !== 'single' && sel && approved === sel ? '선택한 후보가 승인본입니다' : '';
   if (mode === 'side') {
     box.replaceChildren(figure(approved, '승인본', cut), figure(sel, '선택 후보', cut));
+    $$('.fig', box).forEach((f) => { f.dataset.zoomable = ''; });
   } else if (mode === 'swipe') {
     const top = h('img', { src: assetUrl(sel.image), alt: '선택 후보', class: 'top' });
     const range = h('input', { type: 'range', min: 0, max: 100, value: 50, 'aria-label': '비교 위치' });
@@ -416,6 +418,7 @@ function renderCompare(cut) {
     apply();
   } else {
     const fig = figure(sel, approved === sel ? '승인본' : '선택 후보', cut);
+    fig.dataset.zoomable = '';
     if (state.mask.on && sel) {
       const img = $('img', fig);
       const stage = h('div', { class: 'mask-stage' });
@@ -424,6 +427,29 @@ function renderCompare(cut) {
     }
     box.replaceChildren(fig);
   }
+}
+
+// ---------- linked zoom for reviewing faces and details ----------
+
+/** Zooms every image in the compare box around the same relative point, so approved and candidate stay aligned. */
+function applyZoom(fx = state.zoom.fx, fy = state.zoom.fy) {
+  state.zoom.fx = fx;
+  state.zoom.fy = fy;
+  for (const img of $$('#compare [data-zoomable] img')) {
+    img.style.transformOrigin = `${fx * 100}% ${fy * 100}%`;
+    img.style.transform = `scale(${state.zoom.scale})`;
+  }
+}
+
+function resetZoom() {
+  for (const img of $$('#compare img')) { img.style.transform = ''; img.style.transformOrigin = ''; }
+}
+
+function setZoom(on) {
+  state.zoom.on = on && !state.mask.on;
+  $('#zoom-toggle').setAttribute('aria-pressed', String(state.zoom.on));
+  $('#compare').classList.toggle('zooming', state.zoom.on);
+  if (!state.zoom.on) resetZoom();
 }
 
 // ---------- mask painting (masked edit) ----------
@@ -507,6 +533,7 @@ function clearMask() {
 }
 
 function setMaskMode(on) {
+  if (on) setZoom(false);
   state.mask.on = on;
   clearMask();
   $('#mask-toggle').classList.toggle('on', on);
@@ -782,6 +809,22 @@ function wire() {
   }));
   $('#mask-toggle').addEventListener('click', () => setMaskMode(!state.mask.on));
   $('#mask-clear').addEventListener('click', clearMask);
+  $('#zoom-toggle').addEventListener('click', () => setZoom(!state.zoom.on));
+  const compareBox = $('#compare');
+  compareBox.addEventListener('pointermove', (e) => {
+    if (!state.zoom.on) return;
+    const img = e.target.closest('[data-zoomable]')?.querySelector('img');
+    if (!img) return;
+    const r = img.parentElement.getBoundingClientRect();
+    applyZoom(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)));
+  });
+  compareBox.addEventListener('pointerleave', () => { if (state.zoom.on) resetZoom(); });
+  compareBox.addEventListener('wheel', (e) => {
+    if (!state.zoom.on) return;
+    e.preventDefault();
+    state.zoom.scale = Math.min(8, Math.max(2, state.zoom.scale * (e.deltaY < 0 ? 1.25 : 0.8)));
+    applyZoom();
+  }, { passive: false });
   $('#mask-undo').addEventListener('click', undoMask);
   $$('[data-mask-tool]').forEach((b) => b.addEventListener('click', () => setMaskTool(b.dataset.maskTool)));
 
@@ -814,6 +857,8 @@ function wire() {
       clearMask();
       loadReviewDraft();
       renderDialog();
+    } else if (e.key === 'z' || e.key === 'Z') {
+      setZoom(!state.zoom.on);
     } else if ((e.key === 'a' || e.key === 'A') && !$('#approve-cand').disabled) {
       e.preventDefault();
       $('#approve-cand').click();
