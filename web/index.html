@@ -11,11 +11,12 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='9' width='26' height='18' rx='2' fill='%231d1b17'/><path d='M3 9l4-6h6l-4 6zm10 0l4-6h6l-4 6z' fill='%23e8b923'/></svg>">
 </head>
 <body>
+  <a class="skip-link" href="#board">6컷 보드로 건너뛰기</a>
   <header class="topbar">
     <div class="brand">
       <span class="slate" aria-hidden="true"></span>
       <div>
-        <div class="brand-name">Continuity Board</div>
+        <h1 class="brand-name">Continuity Board</h1>
         <div class="brand-sub">캐릭터 기준을 지키며 고치는 6컷 콘티</div>
       </div>
     </div>
@@ -66,8 +67,8 @@
       <p id="baseline-msg" class="msg" role="status"></p>
 
       <details class="style-box">
-        <summary>시각 스타일</summary>
-        <textarea id="style" rows="3" maxlength="300"></textarea>
+        <summary id="style-label">시각 스타일</summary>
+        <textarea id="style" rows="3" maxlength="300" aria-labelledby="style-label"></textarea>
       </details>
 
       <div class="versions">
@@ -81,9 +82,9 @@
       </div>
     </aside>
 
-    <section class="board" aria-labelledby="board-h">
+    <section class="board" id="board" tabindex="-1" aria-labelledby="board-h">
       <div class="board-head">
-        <h1 id="board-h">6컷 보드 <span class="aspect">16:9</span></h1>
+        <h2 id="board-h">6컷 보드 <span class="aspect">16:9</span></h2>
         <div class="board-actions">
           <button id="refresh-stale" class="btn ghost warn-btn" hidden title="이전 기준으로 승인한 컷마다 현재 기준에 맞추는 수정 후보를 만듭니다. 승인은 바뀌지 않습니다."></button>
           <label class="count">후보 <select id="gen-count"><option>1</option><option selected>2</option><option>3</option></select></label>
@@ -141,8 +142,8 @@
           </div>
         </section>
         <section class="box">
-          <h3>이 후보 수정</h3>
-          <textarea id="edit-instruction" rows="3" maxlength="600" placeholder="예: Change the bag to the red shoulder bag. (가방 색 수정)"></textarea>
+          <h3 id="edit-h">이 후보 수정</h3>
+          <textarea id="edit-instruction" aria-labelledby="edit-h" rows="3" maxlength="600" placeholder="예: Change the bag to the red shoulder bag. (가방 색 수정)"></textarea>
           <div class="mask-row">
             <button type="button" id="mask-toggle" class="btn ghost sm" aria-pressed="false">영역 칠하기</button>
             <div id="mask-tools" class="mask-tools" hidden>
@@ -156,7 +157,7 @@
             </div>
           </div>
           <div class="row">
-            <input id="edit-seed" class="seed" inputmode="numeric" placeholder="시드 (비우면 무작위)">
+            <label class="field">시드 (선택)<input id="edit-seed" class="seed" inputmode="numeric" placeholder="비우면 무작위"></label>
             <button id="edit-run" class="btn ink">수정 후보 만들기</button>
           </div>
           <p class="small muted">수정할 컷이 image 1, 승인 기준의 얼굴·전신이 image 2·3으로 들어갑니다. 영역을 칠하지 않으면 전체를 다시 그리므로 배경이나 얼굴이 달라질 수 있습니다. <b>영역을 칠하면 칠한 곳 밖의 픽셀은 원본과 똑같이 유지됩니다.</b> 결과는 새 후보로만 추가됩니다.</p>
@@ -164,7 +165,7 @@
         <section class="box">
           <h3>검토 체크리스트</h3>
           <form id="review" class="review">
-            <input name="reviewer" placeholder="평가자 이름" required>
+            <label class="field">평가자<input name="reviewer" placeholder="예: 김하늘" required autocomplete="name"></label>
             <div class="checks">
               <span>얼굴</span><span data-k="face"></span>
               <span>헤어</span><span data-k="hair"></span>
@@ -173,7 +174,7 @@
               <span>장면 지시</span><span data-k="scene"></span>
               <span class="edit-only">수정 지시</span><span class="edit-only" data-k="instruction"></span>
             </div>
-            <input name="note" placeholder="메모 (선택)">
+            <label class="field">메모 (선택)<input name="note" placeholder="예: 가방 끈 색이 다름"></label>
             <button class="btn ghost">평가 저장</button>
           </form>
           <div id="review-list" class="small"></div>

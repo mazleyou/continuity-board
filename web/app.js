@@ -40,7 +40,32 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// The button that started the current interaction: it is disabled while the request it triggered is in flight,
+// so a double click cannot queue a second GPU job (UI/UX rule "loading-buttons").
+let triggerButton = null;
+document.addEventListener('click', (e) => {
+  triggerButton = e.target.closest?.('button') ?? null;
+  setTimeout(() => { triggerButton = null; });
+}, true);
+const inFlight = new Map();
+
 async function api(method, path, body) {
+  if (method === 'GET') return request(method, path, body);
+  // Identical writes already in flight are shared instead of sent twice.
+  const key = `${method} ${path} ${body instanceof Blob ? `blob:${body.size}` : JSON.stringify(body ?? null)}`;
+  if (inFlight.has(key)) return inFlight.get(key);
+  const btn = triggerButton;
+  const wasDisabled = btn?.disabled;
+  if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+  const pending = request(method, path, body).finally(() => {
+    inFlight.delete(key);
+    if (btn) { btn.removeAttribute('aria-busy'); if (!wasDisabled && btn.isConnected) btn.disabled = false; }
+  });
+  inFlight.set(key, pending);
+  return pending;
+}
+
+async function request(method, path, body) {
   const init = { method };
   if (body instanceof Blob) {
     init.body = body;
